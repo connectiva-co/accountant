@@ -57,6 +57,7 @@ export const App: React.FC = () => {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       <Navbar
         records={records}
+        kpis={kpis}
         onUploadClick={() => setIsUploadOpen(true)}
         onResetData={handleResetData}
         fileName={fileName}

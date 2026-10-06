@@ -1,16 +1,18 @@
 import React from 'react';
-import { Upload, Download, RefreshCw, Layers, ShieldCheck } from 'lucide-react';
+import { Upload, Download, RefreshCw, Layers, ShieldCheck, FileDown } from 'lucide-react';
 import { exportToMultiSheetExcel } from '../utils/radianEngine';
-import type { RadianRecord } from '../types/radian';
+import { generateFullPdfReport } from '../utils/pdfGenerator';
+import type { RadianRecord, FinancialKPIs } from '../types/radian';
 
 interface NavbarProps {
   records: RadianRecord[];
+  kpis: FinancialKPIs;
   onUploadClick: () => void;
   onResetData: () => void;
   fileName: string;
 }
 
-export const Navbar: React.FC<NavbarProps> = ({ records, onUploadClick, onResetData, fileName }) => {
+export const Navbar: React.FC<NavbarProps> = ({ records, kpis, onUploadClick, onResetData, fileName }) => {
   return (
     <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -47,6 +49,15 @@ export const Navbar: React.FC<NavbarProps> = ({ records, onUploadClick, onResetD
           >
             <Upload className="w-3.5 h-3.5 mr-1.5 text-brand-400" />
             <span>Cargar RADIAN (.xlsx)</span>
+          </button>
+
+          <button
+            onClick={() => generateFullPdfReport(records, kpis, fileName)}
+            className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-white bg-rose-600 hover:bg-rose-500 transition-all font-semibold shadow-md shadow-rose-600/20 border border-rose-500/30"
+            title="Descargar Informe Ejecutivo y Detalle de Tabs en PDF"
+          >
+            <FileDown className="w-3.5 h-3.5 mr-1.5" />
+            <span>Descargar PDF</span>
           </button>
 
           <button
