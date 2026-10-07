@@ -92,7 +92,7 @@ export async function buildServer(
 
   app.get('/api/dataset', async (req) => {
     const q = parseQuery(datasetQuery, req.query);
-    const dataset = await buildDataset(db, q);
+    const dataset = await buildDataset(db, { companyId: q.company_id, from: q.from, to: q.to });
     if (!dataset) throw new HttpError(404, 'SIN_EMPRESA', 'No hay empresas registradas todavía.');
     return dataset;
   });
