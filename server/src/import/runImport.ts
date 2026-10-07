@@ -110,6 +110,8 @@ export async function runImport(db: Kysely<Database>, input: ImportInput): Promi
       };
     }
     importId = existing.id;
+    await db.deleteFrom('validation_issues').where('import_id', '=', importId).execute();
+    await db.deleteFrom('import_rows').where('import_id', '=', importId).execute();
     await db
       .updateTable('imports')
       .set({ status: 'PROCESSING', error_message: null })
@@ -298,29 +300,34 @@ async function processRows(db: Kysely<Database>, ctx: ProcessContext): Promise<v
     if (r.external_uid) seenUids.set(r.external_uid, r.row_number);
   }
 
-  for (let i = 0; i < ctx.records.length; i++) {
-    const rowNumber = i + 1;
-    if (done.has(rowNumber)) continue;
-    const row = normalizeRow(ctx.records[i], rowNumber, {
-      companyNitDigits: ctx.companyNitDigits,
-      docTypes,
-      allowUnknownType,
-      unknownTypeCode,
-      rejectRowsWithoutIds: rejectWithoutIds,
-      seenUids,
+  const BATCH_SIZE = 50;
+  for (let i = 0; i < ctx.records.length; i += BATCH_SIZE) {
+    const chunk = ctx.records.slice(i, i + BATCH_SIZE);
+    await db.transaction().execute(async (trx) => {
+      for (let j = 0; j < chunk.length; j++) {
+        const rowNumber = i + j + 1;
+        if (done.has(rowNumber)) continue;
+        const row = normalizeRow(chunk[j], rowNumber, {
+          companyNitDigits: ctx.companyNitDigits,
+          docTypes,
+          allowUnknownType,
+          unknownTypeCode,
+          rejectRowsWithoutIds: rejectWithoutIds,
+          seenUids,
+        });
+        await processRow(trx, ctx, row, docTypes, taxTypes);
+      }
     });
-    await processRow(db, ctx, row, docTypes, taxTypes);
   }
 }
 
 async function processRow(
-  db: Kysely<Database>,
+  trx: Transaction<Database>,
   ctx: ProcessContext,
   row: NormalizedRow,
   docTypes: DocumentTypeIndex,
   taxTypes: Map<string, string>,
 ): Promise<void> {
-  await db.transaction().execute(async (trx) => {
     const importRow = await trx
       .insertInto('import_rows')
       .values({
@@ -389,7 +396,6 @@ async function processRow(
       })
       .where('id', '=', importRow.id)
       .execute();
-  });
 }
 
 interface DocumentOutcome {

@@ -98,6 +98,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
   const { reloadDataset, apiOnline } = useApp();
   const [isDragging, setIsDragging] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingStep, setLoadingStep] = useState<string>("");
   const [loadingName, setLoadingName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<ImportResult | null>(null);
@@ -117,6 +118,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
 
   const processFile = async (file: File) => {
     setLoading(true);
+    setLoadingStep("1/3: Validando estructura y columnas del archivo...");
     setLoadingName(file.name);
     setError(null);
     try {
@@ -152,6 +154,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
         );
       }
 
+      setLoadingStep("2/3: Guardando en PostgreSQL y conciliando impuestos...");
       const enriched = enrichRecords(parsed.records);
       const withDate = enriched.filter((r) => parseRecordDate(r['Fecha Emisión']));
       if (withDate.length === 0) {
@@ -166,6 +169,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
       // en memoria para no romper la funcionalidad.
       try {
         const result = await api.uploadImport(file);
+        setLoadingStep("3/3: Actualizando métricas y períodos...");
         const reloaded = await reloadDataset();
         if (reloaded) {
           setSummary(result);
@@ -285,6 +289,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
               <>
                 <Loader2 className="w-6 h-6 animate-spin text-brand mx-auto mb-3" />
                 <div className="text-[13px] font-medium text-ink">Procesando archivo…</div>
+                <p className="text-[11px] text-brand font-medium mt-1">{loadingStep}</p>
                 <p className="text-[11px] text-ink-muted mt-1 truncate max-w-xs mx-auto" title={loadingName}>
                   {loadingName}
                 </p>
