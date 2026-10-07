@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
+    "dev:api": "npm --prefix server run dev",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "migrate": "npm --prefix server run migrate",
+    "test:api": "npm --prefix server test"
   },
   "dependencies": {
     "clsx": "^2.1.1",

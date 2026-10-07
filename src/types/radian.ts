@@ -49,6 +49,9 @@ export interface FinancialKPIs {
 
   totalNotasCreditoEmitidas: number;
   totalNotasCreditoRecibidas: number;
+  totalNotasCreditoCount: number;
+  ncEmitidasIVA: number;
+  ncRecibidasIVA: number;
 
   totalDocSoporte: number;
   totalDocSoporteCount: number;
@@ -56,7 +59,66 @@ export interface FinancialKPIs {
   totalNomina: number;
   totalNominaCount: number;
 
-  ivaPorPagar: number; // IVA Ventas - IVA Compras Descontable
+  ivaGenerado: number;
+  ivaDescontable: number;
+  ivaPorPagar: number;
   retencionesTotales: number;
+  retencionesFuente: number;
+  retencionesIVA: number;
+  retencionesICA: number;
   totalTransacciones: number;
+}
+
+export type PeriodKind = 'month' | 'quarter' | 'year' | 'range';
+
+export interface Period {
+  kind: PeriodKind;
+  /** ISO (YYYY-MM-DD) inclusive */
+  start: string;
+  /** ISO (YYYY-MM-DD) inclusive */
+  end: string;
+  label: string;
+}
+
+export interface DocumentFilters {
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  party?: string;
+  estado?: string;
+  tipo?: string;
+  minTotal?: string;
+  maxTotal?: string;
+  hasIva?: boolean;
+  onlyRejected?: boolean;
+  onlyPending?: boolean;
+}
+
+export type ViewId =
+  | 'inicio'
+  | 'ventas'
+  | 'compras'
+  | 'nc'
+  | 'dse'
+  | 'nomina'
+  | 'iva'
+  | 'retenciones'
+  | 'conciliacion'
+  | 'obligaciones'
+  | 'terceros'
+  | 'reportes'
+  | 'fuentes'
+  | 'configuracion';
+
+export interface NavTarget {
+  view: ViewId;
+  filters?: DocumentFilters;
+}
+
+export interface AttentionItemData {
+  id: string;
+  label: string;
+  count: number;
+  severity: 'error' | 'warning' | 'neutral';
+  target: NavTarget;
 }

@@ -47,6 +47,9 @@ export function computeKPIs(records: RadianRecord[]): FinancialKPIs {
 
   let totalNotasCreditoEmitidas = 0;
   let totalNotasCreditoRecibidas = 0;
+  let totalNotasCreditoCount = 0;
+  let ncEmitidasIVA = 0;
+  let ncRecibidasIVA = 0;
 
   let totalDocSoporte = 0;
   let totalDocSoporteCount = 0;
@@ -55,6 +58,9 @@ export function computeKPIs(records: RadianRecord[]): FinancialKPIs {
   let totalNominaCount = 0;
 
   let retencionesTotales = 0;
+  let retencionesFuente = 0;
+  let retencionesIVA = 0;
+  let retencionesICA = 0;
 
   for (const r of records) {
     const docType = (r['Tipo de documento'] || '').toLowerCase();
@@ -62,8 +68,14 @@ export function computeKPIs(records: RadianRecord[]): FinancialKPIs {
     const total = r.Total || 0;
     const base = r.baseCalculada || 0;
     const iva = r.IVA || 0;
+    const reteFuente = r['Rete Renta'] || 0;
+    const reteIVA = r['Rete IVA'] || 0;
+    const reteICA = r['Rete ICA'] || 0;
 
-    retencionesTotales += (r['Rete IVA'] || 0) + (r['Rete Renta'] || 0) + (r['Rete ICA'] || 0);
+    retencionesFuente += reteFuente;
+    retencionesIVA += reteIVA;
+    retencionesICA += reteICA;
+    retencionesTotales += reteFuente + reteIVA + reteICA;
 
     if (docType.includes('factura electrónica') || docType.includes('factura')) {
       if (grupo === 'emitido') {
@@ -78,10 +90,13 @@ export function computeKPIs(records: RadianRecord[]): FinancialKPIs {
         totalComprasCount++;
       }
     } else if (docType.includes('nota de crédito') || docType.includes('nota credito')) {
+      totalNotasCreditoCount++;
       if (grupo === 'emitido') {
         totalNotasCreditoEmitidas += total;
+        ncEmitidasIVA += iva;
       } else {
         totalNotasCreditoRecibidas += total;
+        ncRecibidasIVA += iva;
       }
     } else if (docType.includes('soporte') || docType.includes('no obligados')) {
       totalDocSoporte += total;
@@ -92,7 +107,9 @@ export function computeKPIs(records: RadianRecord[]): FinancialKPIs {
     }
   }
 
-  const ivaPorPagar = totalVentasIVA - totalComprasIVA;
+  const ivaGenerado = totalVentasIVA - ncEmitidasIVA;
+  const ivaDescontable = totalComprasIVA - ncRecibidasIVA;
+  const ivaPorPagar = ivaGenerado - ivaDescontable;
 
   return {
     totalVentasBrutas,
@@ -105,12 +122,20 @@ export function computeKPIs(records: RadianRecord[]): FinancialKPIs {
     totalComprasCount,
     totalNotasCreditoEmitidas,
     totalNotasCreditoRecibidas,
+    totalNotasCreditoCount,
+    ncEmitidasIVA,
+    ncRecibidasIVA,
     totalDocSoporte,
     totalDocSoporteCount,
     totalNomina,
     totalNominaCount,
+    ivaGenerado,
+    ivaDescontable,
     ivaPorPagar,
     retencionesTotales,
+    retencionesFuente,
+    retencionesIVA,
+    retencionesICA,
     totalTransacciones: records.length,
   };
 }
@@ -149,37 +174,26 @@ export function filterRecords(records: RadianRecord[], category: string): Radian
   }
 }
 
-export function exportToMultiSheetExcel(records: RadianRecord[], filename = 'RADIAN_CONSOLIDADO_DIAN.xlsx') {
+export function exportToMultiSheetExcel(records: RadianRecord[], filename = 'ACCOUNTANT_CONSOLIDADO.xlsx') {
   const wb = XLSX.utils.book_new();
 
-  // 1. Hoja Maestra
   const wsMaster = XLSX.utils.json_to_sheet(records);
-  XLSX.utils.book_append_sheet(wb, wsMaster, 'RADIAN_MASTER');
+  XLSX.utils.book_append_sheet(wb, wsMaster, 'MAESTRO');
 
-  // 2. Ventas
   const ventas = filterRecords(records, 'ventas');
-  const wsVentas = XLSX.utils.json_to_sheet(ventas);
-  XLSX.utils.book_append_sheet(wb, wsVentas, 'VENTAS');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(ventas), 'VENTAS');
 
-  // 3. Compras
   const compras = filterRecords(records, 'compras');
-  const wsCompras = XLSX.utils.json_to_sheet(compras);
-  XLSX.utils.book_append_sheet(wb, wsCompras, 'COMPRAS');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(compras), 'COMPRAS');
 
-  // 4. Notas Crédito
   const nc = filterRecords(records, 'notas_credito');
-  const wsNC = XLSX.utils.json_to_sheet(nc);
-  XLSX.utils.book_append_sheet(wb, wsNC, 'NOTAS_CREDITO');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(nc), 'NOTAS_CREDITO');
 
-  // 5. Documentos Soporte (DSE)
   const dse = filterRecords(records, 'dse');
-  const wsDSE = XLSX.utils.json_to_sheet(dse);
-  XLSX.utils.book_append_sheet(wb, wsDSE, 'DOC_SOPORTE');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dse), 'DOC_SOPORTE');
 
-  // 6. Nómina & POS
   const nomina = filterRecords(records, 'nomina_pos');
-  const wsNomina = XLSX.utils.json_to_sheet(nomina);
-  XLSX.utils.book_append_sheet(wb, wsNomina, 'NOMINA_POS');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(nomina), 'NOMINA_POS');
 
   XLSX.writeFile(wb, filename);
 }

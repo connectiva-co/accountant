@@ -4,28 +4,41 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  darkMode: 'class',
   theme: {
     extend: {
       colors: {
-        brand: {
-          50: '#f0fdf4',
-          100: '#dcfce7',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803d',
-          800: '#166534',
-          900: '#14532d',
+        canvas: '#F7F8FA',
+        surface: '#FFFFFF',
+        line: '#E5E7EB',
+        ink: {
+          DEFAULT: '#111827',
+          muted: '#667085',
+          faint: '#98A2B3',
         },
-        slate: {
-          850: '#151f32',
-          900: '#0f172a',
-          950: '#090d16',
-        }
+        brand: {
+          DEFAULT: '#147D64',
+          50: '#EEF7F4',
+          100: '#D9EEE7',
+          200: '#B3DED1',
+          500: '#147D64',
+          600: '#0F6653',
+          700: '#0C5243',
+        },
+        success: '#15803D',
+        warning: '#D97706',
+        danger: '#DC2626',
+        info: '#2563EB',
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-      }
+      },
+      boxShadow: {
+        card: '0 1px 2px 0 rgba(16, 24, 40, 0.04)',
+        dropdown: '0 8px 24px -6px rgba(16, 24, 40, 0.14)',
+      },
+      borderRadius: {
+        card: '8px',
+      },
     },
   },
   plugins: [],
