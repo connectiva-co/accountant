@@ -59,8 +59,12 @@ interface AppContextValue {
   apiOnline: boolean | null;
   /** Empresa registrada en la base de datos (null si no hay servidor/datos). */
   apiCompany: ApiCompany | null;
+  /** Lista de empresas registradas en el servidor. */
+  companies: ApiCompany[];
+  /** Selecciona una empresa específica por su ID. */
+  selectCompany: (companyId: string) => Promise<void>;
   /** Vuelve a leer /api/dataset. Devuelve false si no hay datos en el servidor. */
-  reloadDataset: () => Promise<boolean>;
+  reloadDataset: (companyId?: string) => Promise<boolean>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -91,6 +95,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [dataSource, setDataSource] = useState<'servidor' | 'demo'>('demo');
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [apiCompany, setApiCompany] = useState<ApiCompany | null>(null);
+  const [companies, setCompanies] = useState<ApiCompany[]>([]);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
 
   useEffect(() => {
     setCompany(deriveCompany(records));
@@ -109,14 +115,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * Lee el dataset desde la API. Si el servidor no responde o no hay datos,
    * se conservan los registros actuales (demo) y la app sigue funcionando.
    */
-  const reloadDataset = useCallback(async (): Promise<boolean> => {
+  const reloadDataset = useCallback(async (targetCompanyId?: string): Promise<boolean> => {
     try {
-      const [dataset, imports] = await Promise.all([api.getDataset(), api.getImports()]);
+      const targetId = targetCompanyId || selectedCompanyId || undefined;
+      const [dataset, imports, companiesRes] = await Promise.all([
+        api.getDataset(targetId),
+        api.getImports(),
+        api.getCompanies().catch(() => ({ companies: [] })),
+      ]);
+      setCompanies(companiesRes.companies || []);
       if (!dataset.records.length) {
         setApiOnline(true);
         return false;
       }
-      const latest = imports.imports[0];
+      const latest = imports.imports.find(i => !targetId || i.company_nit === dataset.company.nit) || imports.imports[0];
       applyDataset(dataset, latest ? `${latest.filename} (base de datos)` : 'Accountant (base de datos)');
       return true;
     } catch (error) {
@@ -141,6 +153,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     void reloadDataset();
+  }, [reloadDataset]);
+
+  const selectCompany = useCallback(async (companyId: string) => {
+    setSelectedCompanyId(companyId);
+    await reloadDataset(companyId);
   }, [reloadDataset]);
 
   const anchor = useMemo(() => {
@@ -225,6 +242,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dataSource,
       apiOnline,
       apiCompany,
+      companies,
+      selectCompany,
       reloadDataset,
     }),
     [
@@ -250,6 +269,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       dataSource,
       apiOnline,
       apiCompany,
+      companies,
+      selectCompany,
       reloadDataset,
     ]
   );

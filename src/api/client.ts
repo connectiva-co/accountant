@@ -113,6 +113,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   baseUrl: BASE,
+  getCompanies: () => request<{ companies: ApiCompany[] }>('/api/companies'),
 
   getDataset: (companyId?: string) =>
     request<DatasetResponse>(`/api/dataset${companyId ? `?company_id=${companyId}` : ''}`),

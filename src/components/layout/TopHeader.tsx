@@ -2,6 +2,7 @@ import React from 'react';
 import { Download, FileDown, Menu, Upload } from 'lucide-react';
 import { useApp } from '../../state/app-context';
 import { PeriodSelector } from './PeriodSelector';
+import { CompanySelector } from './CompanySelector';
 import { exportToMultiSheetExcel } from '../../utils/radianEngine';
 import { generateFullPdfReport } from '../../utils/pdfGenerator';
 import { formatNumber } from '../../utils/formatters';
@@ -57,14 +58,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onMenuClick }) => {
         </div>
 
         <div className="hidden lg:flex flex-1 justify-center min-w-0">
-          <div className="text-center leading-tight">
-            <div className="text-[12.5px] font-medium text-ink truncate max-w-md">
-              {company.name || 'Empresa sin identificar'}
-            </div>
-            <div className="text-[11px] text-ink-faint num">
-              {company.nit ? `NIT ${company.nit}` : '—'}
-            </div>
-          </div>
+          <CompanySelector />
         </div>
 
         <div className="flex-1 lg:flex-none" />
