@@ -49,19 +49,25 @@ export const ErpStatusBadge: React.FC<ErpStatusBadgeProps> = ({ status = 'NOT_CH
           Ambiguo
         </span>
       );
-    case 'ERROR':
+    case 'ERROR': {
+      const cleanMsg = errorMessage
+        ? errorMessage.includes('429')
+          ? 'Límite de peticiones de Siigo superado (429 Too Many Requests). Reintentando en automático.'
+          : `Error de Siigo: ${errorMessage}`
+        : 'Error al consultar en Siigo';
       return (
         <span
           className={cn(
-            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium whitespace-nowrap bg-rose-500/10 text-rose-700 border-rose-500/25 dark:text-rose-400',
+            'inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium whitespace-nowrap bg-rose-500/10 text-rose-700 border-rose-500/25 dark:text-rose-400 cursor-help',
             className
           )}
-          title={errorMessage ? `Error de Siigo: ${errorMessage}` : "Error al consultar en Siigo"}
+          title={cleanMsg}
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 animate-pulse" />
           Error ERP
         </span>
       );
+    }
     default:
       return (
         <span

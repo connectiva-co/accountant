@@ -33,35 +33,27 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
 
   const docFolio = document.Prefijo ? `${document.Prefijo}-${document.Folio}` : String(document.Folio);
 
-  useEffect(() => {
-    let active = true;
-    const fetchXml = async () => {
-      if (!companyId || !document.id) {
-        setError('Documento o empresa no identificados.');
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await api.getDocumentXml(companyId, document.id);
-        if (active) {
-          setData({ invoice: res.invoice, raw_xml: res.raw_xml });
-          setLoading(false);
-        }
-      } catch (err: any) {
-        if (active) {
-          setError(err?.message || 'No se pudo obtener el XML oficial desde Siigo.');
-          setLoading(false);
-        }
-      }
-    };
-
-    void fetchXml();
-    return () => {
-      active = false;
-    };
+  const fetchXml = React.useCallback(async () => {
+    if (!companyId || !document.id) {
+      setError('Documento o empresa no identificados.');
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.getDocumentXml(companyId, document.id);
+      setData({ invoice: res.invoice, raw_xml: res.raw_xml });
+      setLoading(false);
+    } catch (err: any) {
+      setError(err?.message || 'No se pudo obtener el XML oficial desde Siigo.');
+      setLoading(false);
+    }
   }, [companyId, document.id]);
+
+  useEffect(() => {
+    void fetchXml();
+  }, [fetchXml]);
 
   const handleCopyCufe = (cufe: string) => {
     navigator.clipboard.writeText(cufe);
@@ -139,15 +131,38 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
           )}
 
           {error && !loading && (
-            <div className="p-4 rounded-md border border-red-500/20 bg-red-500/5 text-danger space-y-2">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[13px] font-semibold">No se pudo cargar la factura electrónica</p>
-                  <p className="text-[12px] text-ink-muted mt-0.5">{error}</p>
+            <div className="p-5 rounded-md border border-red-500/20 bg-red-500/5 text-danger space-y-3">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-500" />
+                <div className="space-y-1.5 flex-1">
+                  <p className="text-[14px] font-semibold text-ink">No se pudo cargar la factura {docFolio}</p>
+                  <div className="text-[12px] text-red-600 dark:text-red-400 font-mono bg-surface p-2.5 rounded border border-red-500/20 break-words">
+                    {error}
+                  </div>
+                  {document.match_error && document.match_error !== error && (
+                    <p className="text-[11px] text-ink-muted">
+                      Último estado registrado en cotejo: <span className="font-mono text-ink font-medium">{document.match_error}</span>
+                    </p>
+                  )}
                 </div>
               </div>
-              
+              <div className="flex items-center gap-2 pt-2 border-t border-red-500/10">
+                <button
+                  type="button"
+                  onClick={() => void fetchXml()}
+                  className="px-3 py-1.5 rounded-md bg-brand text-surface text-[12px] font-medium hover:bg-brand/90 transition cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Reintentar sincronización ahora
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="px-3 py-1.5 rounded-md bg-surface hover:bg-canvas border border-line text-ink text-[12px] font-medium transition cursor-pointer"
+                >
+                  Cerrar
+                </button>
+              </div>
             </div>
           )}
 

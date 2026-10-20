@@ -389,8 +389,12 @@ export async function recheckMatches(
       const doc = await loadMatchableDocument(db, companyId, document.id);
       if (!doc) continue;
       const outcome = await matchDocument(resolved, doc, { windowDays: options.windowDays });
-      // Throttle para respetar límite de tasa de Siigo (100 req/min)
-      await new Promise((r) => setTimeout(r, 120));
+      // Throttle para respetar límite de tasa de Siigo (~85 req/min)
+      await new Promise((r) => setTimeout(r, 700));
+      if (outcome.status === 'ERROR' && outcome.errorMessage?.includes('429')) {
+        // Pausa preventiva de 3 segundos ante rate-limiting de Siigo
+        await new Promise((r) => setTimeout(r, 3000));
+      }
       await persistMatch(db, {
         companyId,
         documentId: document.id,

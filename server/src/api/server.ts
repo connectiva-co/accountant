@@ -914,15 +914,38 @@ export async function buildServer(
               outcome,
               dryRun: false,
             });
+          } else if (outcome.status === 'ERROR') {
+            const chosen = await pickIntegration(companyId, 'SIIGO');
+            await persistMatch(db, {
+              companyId,
+              documentId,
+              companyIntegrationId: chosen.id,
+              outcome,
+              dryRun: false,
+            });
+            throw new HttpError(
+              502,
+              'ERROR_CONSULTA_SIIGO',
+              `Error al consultar en Siigo: ${outcome.errorMessage || 'Error desconocido del ERP'}`,
+            );
           }
         }
       }
 
       if (!siigoInvoiceId) {
+        const prevMatch = await db
+          .selectFrom('document_integration_matches')
+          .select(['match_status', 'error_message'])
+          .where('company_id', '=', companyId)
+          .where('document_id', '=', documentId)
+          .executeTakeFirst();
+
+        const extra = prevMatch?.error_message ? ` (Detalle reportado: ${prevMatch.error_message})` : '';
+
         throw new HttpError(
           404,
           'FACTURA_NO_ENCONTRADA_SIIGO',
-          `No se encontró la factura ${doc.prefix ? `${doc.prefix}-${doc.folio}` : doc.folio || doc.external_uid} en Siigo. Verifica que esté sincronizada y emitida en el ERP.`,
+          `No se encontró la factura ${doc.prefix ? `${doc.prefix}-${doc.folio}` : doc.folio || doc.external_uid} en Siigo${extra}.`,
         );
       }
 
