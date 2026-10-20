@@ -46,16 +46,11 @@ export const AccountantLogo: React.FC<LogoProps> = ({
       {showText && (
         <div className="flex items-center gap-1.5 leading-none">
           <span
-            className={`${s.text} font-bold tracking-tight ${
-              light ? 'text-white' : 'text-ink'
-            }`}
+            className={`${s.text} font-bold tracking-tight ${light ? 'text-white' : 'text-ink'
+              }`}
           >
             {APP_NAME}
           </span>
-          <span
-            className={`${s.dot} rounded-full bg-emerald-500 shrink-0`}
-            aria-hidden="true"
-          />
         </div>
       )}
     </div>
