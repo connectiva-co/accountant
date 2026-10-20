@@ -118,7 +118,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
 
   const processFile = async (file: File) => {
     setLoading(true);
-    setLoadingStep("1/3: Validando estructura y columnas del archivo...");
+    setLoadingStep("1/3: Validando estructura y documentos del archivo...");
     setLoadingName(file.name);
     setError(null);
     try {
@@ -154,7 +154,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
         );
       }
 
-      setLoadingStep("2/3: Guardando en PostgreSQL y conciliando impuestos...");
+      setLoadingStep("2/3: Procesando documentos y conciliando impuestos...");
       const enriched = enrichRecords(parsed.records);
       const withDate = enriched.filter((r) => parseRecordDate(r['Fecha Emisión']));
       if (withDate.length === 0) {
@@ -169,7 +169,7 @@ export const FileUploadModal: React.FC<FileUploadModalProps> = ({ isOpen, onClos
       // en memoria para no romper la funcionalidad.
       try {
         const result = await api.uploadImport(file);
-        setLoadingStep("3/3: Actualizando métricas y períodos...");
+        setLoadingStep("3/3: Calculando indicadores y actualizando periodo...");
         const reloaded = await reloadDataset();
         if (reloaded) {
           setSummary(result);

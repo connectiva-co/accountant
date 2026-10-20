@@ -3,7 +3,7 @@ import { Building2, Check, ChevronDown } from "lucide-react";
 import { useApp } from "../../state/app-context";
 
 export const CompanySelector: React.FC = () => {
-  const { company, companies, selectCompany } = useApp();
+  const { company, companies, selectCompany, selectedCompanyId } = useApp();
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -67,7 +67,7 @@ export const CompanySelector: React.FC = () => {
           </div>
           <div className="space-y-0.5 max-h-64 overflow-y-auto">
             {companies.map((c) => {
-              const isSelected = c.nit === company.nit;
+              const isSelected = selectedCompanyId ? c.id === selectedCompanyId : c.nit === company.nit;
               const itemInitials = (c.legal_name || c.trade_name || "E")
                 .split(" ")
                 .filter(Boolean)

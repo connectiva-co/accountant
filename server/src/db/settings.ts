@@ -1,27 +1,16 @@
 import type { Kysely } from 'kysely';
 import type { Database, Json } from '../db/schema.js';
+import { SettingsService } from '../settings/service.js';
 
 export type SettingsMap = Map<string, Json>;
 
 /**
- * Configuración efectiva: claves globales (company_id IS NULL) con los
- * overrides de la empresa por encima. Las claves se exponen como 'scope.key'.
+ * Configuración efectiva (claves globales + overrides de la empresa como
+ * 'scope.key'). Delega en SettingsService para que exista una única ruta de
+ * lectura: schema, defaults y merges viven ahí.
  */
 export async function loadSettings(db: Kysely<Database>, companyId: string | null): Promise<SettingsMap> {
-  let query = db.selectFrom('settings').select(['company_id', 'scope', 'key', 'value']);
-  if (companyId) query = query.where((eb) => eb.or([eb('company_id', 'is', null), eb('company_id', '=', companyId)]));
-  else query = query.where('company_id', 'is', null);
-
-  const rows = await query.execute();
-  const map: SettingsMap = new Map();
-  // Primero globales, luego overrides de la empresa.
-  for (const row of rows.filter((r) => r.company_id === null)) {
-    map.set(`${row.scope}.${row.key}`, row.value);
-  }
-  for (const row of rows.filter((r) => r.company_id !== null)) {
-    map.set(`${row.scope}.${row.key}`, row.value);
-  }
-  return map;
+  return new SettingsService(db).loadMap(companyId);
 }
 
 export function settingBool(settings: SettingsMap, key: string, fallback: boolean): boolean {

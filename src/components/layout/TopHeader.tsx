@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Download, FileDown, FileSpreadsheet, Menu, Upload, ChevronDown } from 'lucide-react';
+import { Download, FileDown, FileSpreadsheet, Menu, Upload, ChevronDown, LogOut } from 'lucide-react';
 import { useApp } from '../../state/app-context';
+import { useAuth } from '../../state/auth-context';
 import { PeriodSelector } from './PeriodSelector';
 import { CompanySelector } from './CompanySelector';
 import { exportToMultiSheetExcel } from '../../utils/radianEngine';
@@ -26,6 +27,7 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onMenuClick }) => {
     lastUpdate,
   } = useApp();
 
+  const { user, logout } = useAuth();
   const [exportOpen, setExportOpen] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
@@ -110,6 +112,17 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onMenuClick }) => {
               <Download className="w-3.5 h-3.5 text-ink-faint" />
               <span>Exportar</span>
               <ChevronDown className={`w-3 h-3 text-ink-faint transition-transform duration-150 ${exportOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Sesión */}
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="h-8 inline-flex items-center gap-1.5 px-2.5 text-xs font-medium border border-line rounded-md bg-surface text-ink hover:bg-canvas transition-colors shadow-sm"
+              title={user ? `Cerrar sesión de ${user.full_name || user.email}` : 'Cerrar sesión'}
+            >
+              <LogOut className="w-3.5 h-3.5 text-ink-faint" />
+              <span className="hidden sm:inline">Salir</span>
             </button>
 
             {exportOpen && (

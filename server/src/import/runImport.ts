@@ -26,6 +26,16 @@ export interface ImportInput {
   filename: string;
   source?: string;
   createdBy?: string | null;
+  /**
+   * Resuelve (y autoriza) la empresa desde la que viene el archivo. Permite a
+   * la API exigir la membresía del usuario ANTES de persistir; por defecto
+   * (CLI) se crea/usa la empresa del NIT sin control de acceso.
+   */
+  resolveCompany?: (candidate: { nit: string; legalName: string } | null) => Promise<{
+    id: string;
+    nit: string;
+    legal_name: string;
+  }>;
 }
 
 export interface ImportCounters {
@@ -74,7 +84,9 @@ export async function runImport(db: Kysely<Database>, input: ImportInput): Promi
     );
   }
 
-  const company = await ensureCompany(db, candidate);
+  const company = input.resolveCompany
+    ? await input.resolveCompany(candidate)
+    : await ensureCompany(db, candidate);
   const settings = await loadSettings(db, company.id);
 
   // Idempotencia: mismo archivo para la misma empresa => no reprocesar.
@@ -221,7 +233,7 @@ export async function runImport(db: Kysely<Database>, input: ImportInput): Promi
 /* Empresa                                                             */
 /* ------------------------------------------------------------------ */
 
-async function ensureCompany(
+export async function ensureCompany(
   db: Kysely<Database>,
   candidate: { nit: string; legalName: string } | null,
 ): Promise<{ id: string; nit: string; legal_name: string }> {

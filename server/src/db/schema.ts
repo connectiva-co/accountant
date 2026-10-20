@@ -224,6 +224,10 @@ export interface AuditLogTable {
   before: Json | null;
   after: Json | null;
   metadata: Generated<Json>;
+  actor_user_id: string | null;
+  target_user_id: string | null;
+  ip: string | null;
+  user_agent: string | null;
   created_at: CreatedAt;
 }
 
@@ -280,6 +284,293 @@ export interface ReportingTaxMonthlyTable {
   updated_at: Timestamptz;
 }
 
+/* ------------------------------------------------------------------ */
+/* Integraciones (migración 0004)                                      */
+/* ------------------------------------------------------------------ */
+
+export interface IntegrationProvidersTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  enabled: Generated<boolean>;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface CompanyIntegrationsTable {
+  id: Generated<string>;
+  company_id: string;
+  provider_id: string;
+  name: string | null;
+  enabled: Generated<boolean>;
+  status: Generated<string>;
+  last_connection_test_at: TimestamptzNull;
+  last_test_status: string | null;
+  last_test_message: string | null;
+  last_successful_connection_at: TimestamptzNull;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface IntegrationSettingsTable {
+  id: Generated<string>;
+  company_integration_id: string;
+  settings: Generated<Json>;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface IntegrationSecretsTable {
+  id: Generated<string>;
+  company_integration_id: string;
+  encrypted_payload: string;
+  nonce: Buffer;
+  auth_tag: Buffer;
+  encryption_key_version: number;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface IntegrationSyncStateTable {
+  id: Generated<string>;
+  company_integration_id: string;
+  resource: string;
+  last_synced_at: TimestamptzNull;
+  cursor: Json | null;
+  metadata: Generated<Json>;
+  updated_at: Timestamptz;
+}
+
+export interface IntegrationRunsTable {
+  id: Generated<string>;
+  company_id: string;
+  company_integration_id: string | null;
+  operation: string;
+  started_at: CreatedAt;
+  finished_at: TimestamptzNull;
+  status: Generated<string>;
+  records_read: Generated<number>;
+  records_matched: Generated<number>;
+  records_not_found: Generated<number>;
+  records_failed: Generated<number>;
+  error_summary: string | null;
+  metadata: Generated<Json>;
+}
+
+export interface DocumentIntegrationMatchesTable {
+  id: Generated<string>;
+  company_id: string;
+  document_id: string;
+  company_integration_id: string;
+  external_id: string | null;
+  external_document_type: string | null;
+  external_number: string | null;
+  match_status: Generated<string>;
+  match_method: string | null;
+  confidence: ColumnType<string | number | null, string | number | null, string | number | null>;
+  matched_at: TimestamptzNull;
+  last_checked_at: TimestamptzNull;
+  external_payload: Json | null;
+  error_message: string | null;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface SyncPoliciesTable {
+  id: Generated<string>;
+  company_id: string;
+  resource_type: string;
+  enabled: Generated<boolean>;
+  master_source: Generated<string>;
+  sync_mode: Generated<string>;
+  conflict_strategy: Generated<string>;
+  schedule_type: string | null;
+  schedule_expression: string | null;
+  last_run_at: TimestamptzNull;
+  next_run_at: TimestamptzNull;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface SyncRoutesTable {
+  id: Generated<string>;
+  sync_policy_id: string;
+  source_integration_id: string | null;
+  target_integration_id: string | null;
+  read_enabled: Generated<boolean>;
+  write_enabled: Generated<boolean>;
+  priority: Generated<number>;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface SyncMappingsTable {
+  id: Generated<string>;
+  company_id: string;
+  resource_type: string;
+  mapping_type: string;
+  source_provider: Generated<string>;
+  target_provider: Generated<string>;
+  source_value: string;
+  target_value: string;
+  metadata: Generated<Json>;
+  enabled: Generated<boolean>;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface EntityExternalRefsTable {
+  id: Generated<string>;
+  company_id: string;
+  entity_type: string;
+  entity_id: string;
+  company_integration_id: string;
+  external_id: string;
+  external_code: string | null;
+  last_seen_at: Timestamptz;
+  source_hash: string | null;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface SyncConflictsTable {
+  id: Generated<string>;
+  company_id: string;
+  resource_type: string;
+  entity_type: Generated<string>;
+  entity_id: string;
+  source_integration_id: string | null;
+  target_integration_id: string | null;
+  source_payload: Generated<Json>;
+  target_payload: Generated<Json>;
+  conflict_type: Generated<string>;
+  status: Generated<string>;
+  resolution: string | null;
+  resolved_at: TimestamptzNull;
+  resolved_by: string | null;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+/* ------------------------------------------------------------------ */
+/* Auth / RBAC (migración 0005)                                        */
+/* ------------------------------------------------------------------ */
+
+export type UserStatus = 'INVITED' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED' | 'LOCKED';
+export type MembershipStatus = 'INVITED' | 'ACTIVE' | 'DISABLED';
+export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface UsersTable {
+  id: Generated<string>;
+  email: string;
+  full_name: Generated<string>;
+  password_hash: string;
+  status: Generated<UserStatus>;
+  must_change_password: Generated<boolean>;
+  platform_admin: Generated<boolean>;
+  two_factor_enabled: Generated<boolean>;
+  failed_attempts: Generated<number>;
+  locked_until: TimestamptzNull;
+  last_login_at: TimestamptzNull;
+  last_login_ip: string | null;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface CompanyMembershipsTable {
+  id: Generated<string>;
+  company_id: string;
+  user_id: string;
+  status: Generated<MembershipStatus>;
+  disabled_at: TimestamptzNull;
+  disabled_by: string | null;
+  disabled_reason: string | null;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface RolesTable {
+  id: Generated<string>;
+  company_id: string | null;
+  code: string;
+  name: string;
+  description: string | null;
+  is_system: Generated<boolean>;
+  is_editable: Generated<boolean>;
+  active: Generated<boolean>;
+  created_at: CreatedAt;
+  updated_at: CreatedAt;
+}
+
+export interface MembershipRolesTable {
+  membership_id: string;
+  role_id: string;
+  created_at: CreatedAt;
+}
+
+export interface PermissionsTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  description: string | null;
+  category: string;
+  risk_level: Generated<RiskLevel>;
+  requires_step_up: Generated<boolean>;
+  created_at: CreatedAt;
+}
+
+export interface RolePermissionsTable {
+  role_id: string;
+  permission_id: string;
+}
+
+export interface UserMfaMethodsTable {
+  id: Generated<string>;
+  user_id: string;
+  type: Generated<string>;
+  status: Generated<string>;
+  encrypted_secret: string;
+  verified_at: TimestamptzNull;
+  last_used_at: TimestamptzNull;
+  created_at: CreatedAt;
+}
+
+export interface UserRecoveryCodesTable {
+  id: Generated<string>;
+  user_id: string;
+  code_hash: string;
+  used_at: TimestamptzNull;
+  created_at: CreatedAt;
+}
+
+export interface UserSessionsTable {
+  id: Generated<string>;
+  user_id: string;
+  session_token_hash: string;
+  refresh_token_hash: string;
+  csrf_token_hash: string;
+  ip: string | null;
+  user_agent: string | null;
+  created_at: CreatedAt;
+  last_used_at: Generated<Date>;
+  last_auth_at: Generated<Date>;
+  expires_at: Timestamptz;
+  refresh_expires_at: Timestamptz;
+  revoked_at: TimestamptzNull;
+  revoked_reason: string | null;
+}
+
+export interface LoginAttemptsTable {
+  id: Generated<number>;
+  email: string;
+  user_id: string | null;
+  ip: string | null;
+  user_agent: string | null;
+  success: boolean;
+  failure_reason: string | null;
+  created_at: CreatedAt;
+}
+
 export interface SchemaMigrationsTable {
   name: string;
   checksum: string;
@@ -305,6 +596,28 @@ export interface Database {
   reporting_monthly: ReportingMonthlyTable;
   reporting_counterparty_monthly: ReportingCounterpartyMonthlyTable;
   reporting_tax_monthly: ReportingTaxMonthlyTable;
+  integration_providers: IntegrationProvidersTable;
+  company_integrations: CompanyIntegrationsTable;
+  integration_settings: IntegrationSettingsTable;
+  integration_secrets: IntegrationSecretsTable;
+  integration_sync_state: IntegrationSyncStateTable;
+  integration_runs: IntegrationRunsTable;
+  document_integration_matches: DocumentIntegrationMatchesTable;
+  sync_policies: SyncPoliciesTable;
+  sync_routes: SyncRoutesTable;
+  sync_mappings: SyncMappingsTable;
+  entity_external_refs: EntityExternalRefsTable;
+  sync_conflicts: SyncConflictsTable;
+  users: UsersTable;
+  company_memberships: CompanyMembershipsTable;
+  roles: RolesTable;
+  membership_roles: MembershipRolesTable;
+  permissions: PermissionsTable;
+  role_permissions: RolePermissionsTable;
+  user_mfa_methods: UserMfaMethodsTable;
+  user_recovery_codes: UserRecoveryCodesTable;
+  user_sessions: UserSessionsTable;
+  login_attempts: LoginAttemptsTable;
   schema_migrations: SchemaMigrationsTable;
 }
 
@@ -349,3 +662,36 @@ export type ReportingTaxMonthly = Selectable<ReportingTaxMonthlyTable>;
 export type NewReportingTaxMonthly = Insertable<ReportingTaxMonthlyTable>;
 
 export type AuditEntry = Insertable<AuditLogTable>;
+
+export type IntegrationProviderRow = Selectable<IntegrationProvidersTable>;
+export type CompanyIntegration = Selectable<CompanyIntegrationsTable>;
+export type NewCompanyIntegration = Insertable<CompanyIntegrationsTable>;
+export type CompanyIntegrationUpdate = Updateable<CompanyIntegrationsTable>;
+export type IntegrationRun = Selectable<IntegrationRunsTable>;
+export type NewIntegrationRun = Insertable<IntegrationRunsTable>;
+export type IntegrationRunUpdate = Updateable<IntegrationRunsTable>;
+export type DocumentIntegrationMatch = Selectable<DocumentIntegrationMatchesTable>;
+export type NewDocumentIntegrationMatch = Insertable<DocumentIntegrationMatchesTable>;
+export type DocumentIntegrationMatchUpdate = Updateable<DocumentIntegrationMatchesTable>;
+export type SyncPolicy = Selectable<SyncPoliciesTable>;
+export type NewSyncPolicy = Insertable<SyncPoliciesTable>;
+export type SyncPolicyUpdate = Updateable<SyncPoliciesTable>;
+export type SyncRoute = Selectable<SyncRoutesTable>;
+export type NewSyncRoute = Insertable<SyncRoutesTable>;
+export type SyncMapping = Selectable<SyncMappingsTable>;
+export type NewSyncMapping = Insertable<SyncMappingsTable>;
+export type EntityExternalRef = Selectable<EntityExternalRefsTable>;
+export type NewEntityExternalRef = Insertable<EntityExternalRefsTable>;
+export type SyncConflict = Selectable<SyncConflictsTable>;
+export type NewSyncConflict = Insertable<SyncConflictsTable>;
+
+export type User = Selectable<UsersTable>;
+export type NewUser = Insertable<UsersTable>;
+export type UserUpdate = Updateable<UsersTable>;
+export type CompanyMembership = Selectable<CompanyMembershipsTable>;
+export type NewCompanyMembership = Insertable<CompanyMembershipsTable>;
+export type Role = Selectable<RolesTable>;
+export type NewRole = Insertable<RolesTable>;
+export type Permission = Selectable<PermissionsTable>;
+export type UserSession = Selectable<UserSessionsTable>;
+export type LoginAttempt = Insertable<LoginAttemptsTable>;

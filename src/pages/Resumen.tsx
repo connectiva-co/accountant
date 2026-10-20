@@ -31,6 +31,7 @@ export const Resumen: React.FC = () => {
     period,
     prevPeriod,
     nav,
+    isReloading,
   } = useApp();
 
   const trend = (curr: number, prev: number): number | null | undefined => {
@@ -108,7 +109,7 @@ export const Resumen: React.FC = () => {
       <PageHeader title="Resumen contable" subtitle={period.label} />
 
       <MetricGroup columns={5}>
-        <MetricCard
+        <MetricCard loading={isReloading}
           label="Ventas netas"
           value={formatCurrency(ventasNetas)}
           trend={trend(ventasNetas, prevVentasNetas)}
@@ -116,7 +117,7 @@ export const Resumen: React.FC = () => {
           footnote={`${formatNumber(kpis.totalVentasCount)} facturas`}
           onClick={() => nav({ view: 'ventas' })}
         />
-        <MetricCard
+        <MetricCard loading={isReloading}
           label="Compras netas"
           value={formatCurrency(comprasNetas)}
           trend={trend(comprasNetas, prevComprasNetas)}
@@ -124,7 +125,7 @@ export const Resumen: React.FC = () => {
           footnote={`${formatNumber(kpis.totalComprasCount)} facturas`}
           onClick={() => nav({ view: 'compras' })}
         />
-        <MetricCard
+        <MetricCard loading={isReloading}
           label="IVA generado"
           value={formatCurrency(kpis.ivaGenerado)}
           trend={trend(kpis.ivaGenerado, prevKpis.ivaGenerado)}
@@ -132,7 +133,7 @@ export const Resumen: React.FC = () => {
           footnote="Débito fiscal"
           onClick={() => nav({ view: 'ventas', filters: { hasIva: true } })}
         />
-        <MetricCard
+        <MetricCard loading={isReloading}
           label="IVA descontable"
           value={formatCurrency(kpis.ivaDescontable)}
           trend={trend(kpis.ivaDescontable, prevKpis.ivaDescontable)}
@@ -140,7 +141,7 @@ export const Resumen: React.FC = () => {
           footnote="Crédito fiscal"
           onClick={() => nav({ view: 'compras', filters: { hasIva: true } })}
         />
-        <MetricCard
+        <MetricCard loading={isReloading}
           label="IVA estimado por pagar"
           value={formatCurrency(kpis.ivaPorPagar)}
           trend={trend(kpis.ivaPorPagar, prevKpis.ivaPorPagar)}

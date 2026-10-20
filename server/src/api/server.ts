@@ -1,38 +1,65 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
+import { ZodError, z } from 'zod';
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
 import type { Database, Json } from '../db/schema.js';
-import { loadSettings } from '../db/settings.js';
 import { ImportError } from '../import/runImport.js';
+import { ensureCompany } from '../import/runImport.js';
+import { IntegrationError } from '../integrations/adapter.js';
+import { IntegrationManager } from '../integrations/manager.js';
+import { listAdapters } from '../integrations/registry.js';
+import { loadMatchableDocument, matchDocument, persistMatch, recheckMatches } from '../integrations/matching.js';
+import { parseUblInvoice } from '../domain/ubl.js';
+import { siigoAdapter } from '../integrations/providers/siigo.js';
+import { runThirdPartySync } from '../integrations/sync/engine.js';
+import {
+  clearIntegrationCredentials,
+  getIntegration,
+  listIntegrations,
+  upsertIntegration,
+  writeIntegrationCredentials,
+  writeIntegrationSettings,
+} from '../integrations/store.js';
+import { nameKey } from '../domain/text.js';
+import { SettingsService } from '../settings/service.js';
+import { UnknownScopeError, UnknownSettingKeyError } from '../settings/schemas.js';
 import { runImport } from '../import/runImport.js';
 import { SpreadsheetError } from '../import/spreadsheet.js';
-import { buildDataset, listCompanies } from '../services/dataset.js';
+import { buildDataset } from '../services/dataset.js';
+import { createGuards, currentUser } from '../auth/guards.js';
+import { listMemberCompanies } from '../auth/permissions.js';
+import { grantMembership } from '../auth/memberships.js';
+import { allowedOrigins, CSRF_HEADER } from '../auth/constants.js';
+import { audit } from '../auth/service.js';
+import { registerAuthRoutes } from './authRoutes.js';
+import { registerAdminRoutes } from './adminRoutes.js';
+import { HttpError } from './errors.js';
 import {
   QueryError,
+  conflictResolveBody,
+  companyParams,
   counterpartiesQuery,
   datasetQuery,
   documentsQuery,
   eventsQuery,
+  integrationBody,
+  integrationParams,
   issuesQuery,
+  matchBody,
+  matchesQuery,
+  parseBody,
   parseQuery,
   periodQuery,
   companyQuery,
   resolveIssueBody,
   settingsBody,
+  syncRunBody,
 } from './schemas.js';
 
-export class HttpError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'HttpError';
-  }
-}
+export { HttpError };
 
 interface ServerOptions {
   logger?: boolean;
@@ -41,6 +68,28 @@ interface ServerOptions {
 function periodToIndex(period: string): number {
   const [y, m] = period.split('-').map(Number);
   return y * 12 + (m - 1);
+}
+
+function integrationStatus(error: IntegrationError): number {
+  switch (error.code) {
+    case 'PROVIDER_DESCONOCIDO':
+    case 'SIN_INTEGRACION':
+      return 404;
+    case 'INTEGRACION_DESHABILITADA':
+    case 'SIN_CREDENCIALES':
+    case 'SIN_CAPABILIDAD':
+      return 409;
+    case 'CONFIGURACION_INVALIDA':
+    case 'CREDENCIALES_INVALIDAS':
+      return 422;
+    case 'SECRETS_SIN_LLAVE':
+      return 503;
+    case 'TEST_FALLIDO':
+    case 'PROVIDER_ERROR':
+      return 502;
+    default:
+      return 500;
+  }
 }
 
 export async function buildServer(
@@ -53,8 +102,49 @@ export async function buildServer(
       : false,
   });
 
-  await app.register(cors, { origin: true });
+  await app.register(cookie);
+
+  // Cookies de sesión: solo orígenes permitidos (CORS con credenciales).
+  const explicitOrigins = allowedOrigins();
+  const allowAll = explicitOrigins.includes('*');
+  await app.register(cors, {
+    credentials: true,
+    origin: (origin, cb) => {
+      if (!origin || allowAll) return cb(null, true);
+      if (explicitOrigins.includes(origin)) return cb(null, true);
+      try {
+        const host = new URL(origin).hostname;
+        if (host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.local')) {
+          return cb(null, true);
+        }
+        const parts = host.split('.').map(Number);
+        if (parts.length === 4 && parts.every((n) => !isNaN(n) && n >= 0 && n <= 255)) {
+          // Local/private IPv4 and Tailscale (100.64.0.0/10)
+          if (parts[0] === 127 || parts[0] === 10) return cb(null, true);
+          if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return cb(null, true);
+          if (parts[0] === 192 && parts[1] === 168) return cb(null, true);
+          if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return cb(null, true);
+        }
+      } catch {
+        // origen mal formado
+      }
+      return cb(null, false);
+    },
+    allowedHeaders: ['Content-Type', CSRF_HEADER],
+  });
   await app.register(multipart, { limits: { fileSize: 100 * 1024 * 1024, files: 1 } });
+
+  const settings = new SettingsService(db);
+  const integrations = new IntegrationManager(db, {
+    warn: (data, message) => app.log.warn(data, message),
+    error: (data, message) => app.log.error(data, message),
+  });
+  app.addHook('onClose', async () => integrations.dispose());
+
+  // Autenticación global: sesión por cookie httpOnly + CSRF en mutaciones.
+  // Las rutas definen además empresa (membresía) y permisos vía guards.
+  const guards = createGuards(db);
+  app.addHook('onRequest', guards.authenticate);
 
   app.setErrorHandler((rawError: unknown, _req, reply) => {
     const error = rawError as Error & { statusCode?: number };
@@ -70,6 +160,16 @@ export async function buildServer(
     if (error instanceof SpreadsheetError) {
       return reply.status(422).send({ error: { code: 'ARCHIVO_INVALIDO', message: error.message } });
     }
+    if (error instanceof IntegrationError) {
+      return reply.status(integrationStatus(error)).send({ error: { code: error.code, message: error.message } });
+    }
+    if (error instanceof UnknownScopeError || error instanceof UnknownSettingKeyError) {
+      return reply.status(400).send({ error: { code: 'SETTING_DESCONOCIDO', message: error.message } });
+    }
+    if (error instanceof ZodError) {
+      const message = error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      return reply.status(422).send({ error: { code: 'VALIDACION', message } });
+    }
     const statusCode = typeof error.statusCode === 'number' ? error.statusCode : 500;
     if (statusCode < 500) {
       return reply.status(statusCode).send({ error: { code: 'SOLICITUD_INVALIDA', message: error.message } });
@@ -79,30 +179,63 @@ export async function buildServer(
   });
 
   /* ---------------------------------------------------------------- */
-  /* Salud y empresas                                                  */
+  /* Salud, autenticación y empresas                                  */
   /* ---------------------------------------------------------------- */
+
+  await registerAuthRoutes(app, db, guards);
+  registerAdminRoutes(app, db, guards);
 
   app.get('/api/health', async () => ({ ok: true, now: new Date().toISOString() }));
 
-  app.get('/api/companies', async () => ({ companies: await listCompanies(db) }));
+  app.get('/api/companies', { preHandler: guards.requireAuth }, async (req) => {
+    const user = guards.principal(req).user;
+    const rows = await listMemberCompanies(db, user.id);
+    return {
+      companies: rows.map((row) => ({
+        id: row.id,
+        nit: row.nit,
+        legal_name: row.legal_name,
+        trade_name: row.trade_name,
+        currency: row.currency,
+        timezone: row.timezone,
+        active: row.active,
+      })),
+    };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Dataset (forma RADIAN, alimenta la UI existente)                  */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/dataset', async (req) => {
-    const q = parseQuery(datasetQuery, req.query);
-    const dataset = await buildDataset(db, { companyId: q.company_id, from: q.from, to: q.to });
-    if (!dataset) throw new HttpError(404, 'SIN_EMPRESA', 'No hay empresas registradas todavía.');
-    return dataset;
-  });
+  app.get(
+    '/api/dataset',
+    { preHandler: [guards.requireCompanyIfPresent, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const q = parseQuery(datasetQuery, req.query);
+      let companyId = q.company_id;
+      if (!companyId) {
+        // Sin company_id explícito: la primera empresa con membresía ACTIVE.
+        const user = currentUser(req);
+        const member = (await listMemberCompanies(db, user.id))[0];
+        if (!member) throw new HttpError(403, 'SIN_ACCESO', 'No tienes empresas asignadas.');
+        companyId = member.id;
+      }
+      const dataset = await buildDataset(db, { companyId, from: q.from, to: q.to });
+      if (!dataset) throw new HttpError(404, 'SIN_EMPRESA', 'No hay empresas registradas todavía.');
+      return dataset;
+    },
+  );
 
   /* ---------------------------------------------------------------- */
   /* Importaciones                                                     */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/imports', async (req) => {
-    const q = parseQuery(companyQuery, req.query);
+  app.get(
+    '/api/imports',
+    { preHandler: [guards.requireCompany, guards.requirePermission('radian.read')] },
+    async (req) => {
+      const q = parseQuery(companyQuery, req.query);
+      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     let query = db
       .selectFrom('imports')
       .leftJoin('companies', 'companies.id', 'imports.company_id')
@@ -125,29 +258,77 @@ export async function buildServer(
       ])
       .orderBy('imports.started_at', 'desc')
       .limit(100);
-    if (q.company_id) query = query.where('imports.company_id', '=', q.company_id);
+    query = query.where('imports.company_id', '=', q.company_id);
     return { imports: await query.execute() };
   });
 
-  app.post('/api/imports', async (req, reply) => {
-    const file = await req.file();
-    if (!file) throw new HttpError(400, 'SIN_ARCHIVO', 'Falta el archivo en el campo "file".');
-    const buffer = await file.toBuffer();
-    const result = await runImport(db, {
-      buffer,
-      filename: file.filename,
-      source: 'RADIAN',
-      createdBy: 'api',
-    });
-    return reply.status(result.replayed ? 200 : 201).send(result);
-  });
+  app.post(
+    '/api/imports',
+    { preHandler: [guards.requireAuth, guards.requirePermission('radian.import')] },
+    async (req, reply) => {
+      const file = await req.file();
+      if (!file) throw new HttpError(400, 'SIN_ARCHIVO', 'Falta el archivo en el campo "file".');
+      const buffer = await file.toBuffer();
+      const user = currentUser(req);
 
-  app.get('/api/imports/:id', async (req) => {
+      // La empresa se conoce recién al parsear el archivo (NIT emisor/receptor):
+      // se exige la membresía ANTES de persistir cualquier cosa.
+      const resolveCompany = async (candidate: { nit: string; legalName: string } | null) => {
+        if (!candidate) return ensureCompany(db, null);
+        const existing = await db
+          .selectFrom('companies')
+          .select(['id'])
+          .where('nit', '=', candidate.nit)
+          .executeTakeFirst();
+        if (existing) {
+          await guards.assertCompanyPermission(user, existing.id, 'radian.import');
+          return ensureCompany(db, candidate);
+        }
+        // Empresa nueva: la crea y queda como OWNER quien importa (nunca un
+        // usuario ajeno puede quedarse con el acceso).
+        const company = await ensureCompany(db, candidate);
+        await grantMembership(db, {
+          companyId: company.id,
+          userId: user.id,
+          roleCode: 'OWNER',
+        });
+        await audit(db, {
+          companyId: company.id,
+          entityType: 'companies',
+          entityId: company.id,
+          action: 'INSERT',
+          userId: user.id,
+          ip: req.ip,
+          userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+          after: { nit: company.nit, legal_name: company.legal_name } as Json,
+          metadata: { via: 'import' } as Json,
+        });
+        return company;
+      };
+
+      const result = await runImport(db, {
+        buffer,
+        filename: file.filename,
+        source: 'RADIAN',
+        createdBy: user.id,
+        resolveCompany,
+      });
+      return reply.status(result.replayed ? 200 : 201).send(result);
+    },
+  );
+
+  app.get(
+    '/api/imports/:id',
+    { preHandler: [guards.requireCompany, guards.requirePermission('radian.read')] },
+    async (req) => {
     const { id } = req.params as { id: string };
+    const q = parseQuery(companyQuery, req.query);
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     const row = await db
       .selectFrom('imports')
       .selectAll()
       .where('id', '=', id)
+      .where('company_id', '=', q.company_id)
       .executeTakeFirst();
     if (!row) throw new HttpError(404, 'NO_ENCONTRADA', 'Importación no encontrada.');
 
@@ -178,8 +359,11 @@ export async function buildServer(
   /* Documentos                                                        */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/documents', async (req) => {
-    const q = parseQuery(documentsQuery, req.query);
+  app.get(
+    '/api/documents',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const q = parseQuery(documentsQuery, req.query);
     if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
 
     let base = db
@@ -236,8 +420,13 @@ export async function buildServer(
     return { total: Number(totalRow?.count ?? 0), documents: rows };
   });
 
-  app.get('/api/documents/:id', async (req) => {
-    const { id } = req.params as { id: string };
+  app.get(
+    '/api/documents/:id',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { id } = req.params as { id: string };
+    const q = parseQuery(companyQuery, req.query);
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     const doc = await db
       .selectFrom('documents')
       .innerJoin('document_types', 'document_types.id', 'documents.document_type_id')
@@ -254,6 +443,7 @@ export async function buildServer(
         'receiver.legal_name as receiver_name',
       ])
       .where('documents.id', '=', id)
+      .where('documents.company_id', '=', q.company_id)
       .executeTakeFirst();
     if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
 
@@ -304,8 +494,11 @@ export async function buildServer(
   /* Eventos                                                           */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/events', async (req) => {
-    const q = parseQuery(eventsQuery, req.query);
+  app.get(
+    '/api/events',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const q = parseQuery(eventsQuery, req.query);
     let query = db
       .selectFrom('document_events')
       .select([
@@ -320,7 +513,8 @@ export async function buildServer(
       ])
       .orderBy('occurred_at', 'desc')
       .limit(q.limit);
-    if (q.company_id) query = query.where('company_id', '=', q.company_id);
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    query = query.where('company_id', '=', q.company_id);
     return { events: await query.execute() };
   });
 
@@ -328,8 +522,11 @@ export async function buildServer(
   /* Validaciones                                                      */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/issues', async (req) => {
-    const q = parseQuery(issuesQuery, req.query);
+  app.get(
+    '/api/issues',
+    { preHandler: [guards.requireCompany, guards.requirePermission('issues.read')] },
+    async (req) => {
+      const q = parseQuery(issuesQuery, req.query);
     if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
 
     let query = db
@@ -349,35 +546,39 @@ export async function buildServer(
     return { issues: await query.execute() };
   });
 
-  app.post('/api/issues/:id/resolve', async (req) => {
-    const { id } = req.params as { id: string };
-    const body = parseQuery(resolveIssueBody, req.body);
+  app.post(
+    '/api/issues/:id/resolve',
+    { preHandler: [guards.requireCompany, guards.requirePermission('issues.resolve')] },
+    async (req) => {
+      const { id } = req.params as { id: string };
+      const body = parseQuery(resolveIssueBody, req.body);
+      const user = currentUser(req);
+      if (!body.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     const issue = await db
       .selectFrom('validation_issues')
       .selectAll()
       .where('id', '=', id)
+      .where('company_id', '=', body.company_id)
       .executeTakeFirst();
     if (!issue) throw new HttpError(404, 'NO_ENCONTRADA', 'Incidencia no encontrada.');
 
     await db
       .updateTable('validation_issues')
-      .set({ resolved_at: new Date(), resolved_by: body.resolved_by ?? 'api' })
+      .set({ resolved_at: new Date(), resolved_by: user.id })
       .where('id', '=', id)
       .execute();
 
-    await db
-      .insertInto('audit_log')
-      .values({
-        company_id: issue.company_id,
-        entity_type: 'validation_issues',
-        entity_id: id,
-        action: 'RESOLVE',
-        actor_type: 'USER',
-        actor_id: body.resolved_by ?? null,
-        before: { resolved_at: issue.resolved_at } as Json,
-        after: { resolved_at: new Date().toISOString() } as Json,
-      })
-      .execute();
+    await audit(db, {
+      companyId: issue.company_id,
+      entityType: 'validation_issues',
+      entityId: id,
+      action: 'RESOLVE',
+      userId: user.id,
+      ip: req.ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+      before: { resolved_at: issue.resolved_at } as Json,
+      after: { resolved_at: new Date().toISOString() } as Json,
+    });
 
     return { resolved: true, id };
   });
@@ -386,83 +587,502 @@ export async function buildServer(
   /* Configuración                                                     */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/settings', async (req) => {
-    const q = parseQuery(companyQuery, req.query);
-    const settings = await loadSettings(db, q.company_id ?? null);
-    const rows = await db
-      .selectFrom('settings')
-      .selectAll()
-      .where((eb) =>
-        q.company_id
-          ? eb.or([eb('company_id', 'is', null), eb('company_id', '=', q.company_id)])
-          : eb('company_id', 'is', null),
-      )
-      .orderBy('scope')
-      .orderBy('key')
-      .execute();
-    return { rows, effective: Object.fromEntries(settings) };
+  app.get(
+    '/api/settings',
+    { preHandler: [guards.requireCompanyIfPresent, guards.requirePermission('settings.read')] },
+    async (req) => {
+      const q = parseQuery(companyQuery, req.query);
+    const rows = await settings.getAll(q.company_id ?? null);
+    const effective = await settings.loadMap(q.company_id ?? null);
+    return { rows, effective: Object.fromEntries(effective) };
   });
 
-  app.put('/api/settings', async (req) => {
-    const body = parseQuery(settingsBody, req.body);
-    const valueType = Array.isArray(body.value)
-      ? 'array'
-      : body.value === null
-        ? 'null'
-        : typeof body.value === 'object'
-          ? 'object'
-          : typeof body.value;
-    if (!['string', 'number', 'boolean', 'array', 'object', 'null'].includes(valueType)) {
-      throw new HttpError(400, 'VALOR_INVALIDO', `Tipo de valor no soportado: ${valueType}`);
-    }
-
-    const existing = await db
-      .selectFrom('settings')
-      .select(['id'])
-      .where('scope', '=', body.scope)
-      .where('key', '=', body.key)
-      .where((eb) =>
-        body.company_id
-          ? eb('company_id', '=', body.company_id)
-          : eb('company_id', 'is', null),
-      )
-      .executeTakeFirst();
-
-    if (existing) {
-      await db
-        .updateTable('settings')
-        .set({
-          value: body.value as Json,
-          value_type: valueType === 'null' ? null : valueType,
-          description: body.description ?? null,
-        })
-        .where('id', '=', existing.id)
-        .execute();
-      return { updated: true, id: existing.id };
-    }
-
-    const inserted = await db
-      .insertInto('settings')
-      .values({
-        company_id: body.company_id ?? null,
-        scope: body.scope,
-        key: body.key,
-        value: body.value as Json,
-        value_type: valueType === 'null' ? null : valueType,
+  app.put(
+    '/api/settings',
+    { preHandler: [guards.requireCompanyIfPresent, guards.requirePermission('settings.write')] },
+    async (req) => {
+      const body = parseQuery(settingsBody, req.body);
+      const user = currentUser(req);
+      const entry = await settings.set(body.company_id ?? null, body.scope, body.key, body.value, {
+        actorType: 'USER',
+        actorId: user.id,
         description: body.description ?? null,
-        is_system: false,
-      })
-      .returning('id')
+      });
+    return { created: entry.id === null, updated: entry.id !== null, id: entry.id, entry };
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Integraciones                                                     */
+  /* ---------------------------------------------------------------- */
+
+  const catalogEntry = (provider: string) => {
+    const adapter = listAdapters().find((item) => item.provider === provider);
+    if (!adapter) return null;
+    return {
+      provider: adapter.provider,
+      name: adapter.displayName,
+      capabilities: adapter.capabilities,
+      sync_resources: adapter.syncResources,
+      fields: adapter.fields,
+    };
+  };
+
+  /** Integración habilitada a usar: la indicada o la primera disponible. */
+  const pickIntegration = async (companyId: string, provider?: string) => {
+    const summaries = (await listIntegrations(db, companyId)).filter(
+      (item) => item.enabled && item.status !== 'DISABLED',
+    );
+    const chosen = provider ? summaries.find((item) => item.provider === provider) : summaries[0];
+    if (!chosen) {
+      throw new HttpError(
+        409,
+        'SIN_INTEGRACION',
+        provider
+          ? `La empresa no tiene una integración habilitada con "${provider}".`
+          : 'La empresa no tiene integraciones habilitadas.',
+      );
+    }
+    return chosen;
+  };
+
+  app.get(
+    '/api/companies/:companyId/integrations',
+    { preHandler: [guards.requireCompany, guards.requirePermission('integrations.read')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    return {
+      integrations: await listIntegrations(db, companyId),
+      catalog: listAdapters().map((adapter) => ({
+        provider: adapter.provider,
+        name: adapter.displayName,
+        capabilities: adapter.capabilities,
+        sync_resources: adapter.syncResources,
+        fields: adapter.fields,
+      })),
+    };
+  });
+
+  app.get(
+    '/api/companies/:companyId/integrations/:provider',
+    { preHandler: [guards.requireCompany, guards.requirePermission('integrations.read')] },
+    async (req) => {
+      const params = parseBody(integrationParams, req.params);
+    const integration = await getIntegration(db, params.companyId, params.provider);
+    if (!integration) throw new HttpError(404, 'SIN_INTEGRACION', 'Integración no registrada.');
+    return { integration, catalog: catalogEntry(params.provider) };
+  });
+
+  /**
+   * Crea/actualiza la integración. Los settings se validan contra el schema
+   * del adapter; las credenciales se validan igual y se guardan cifradas.
+   * Nunca se devuelven secretos en la respuesta.
+   */
+  app.put(
+    '/api/companies/:companyId/integrations/:provider',
+    {
+      preHandler: [
+        guards.requireCompany,
+        (req, reply) => {
+          const body = (req.body ?? {}) as { credentials?: unknown; clear_credentials?: boolean };
+          const writesCredentials =
+            body.credentials !== undefined || body.clear_credentials === true;
+          return guards.requirePermission(
+            writesCredentials ? 'integrations.credentials.write' : 'integrations.configure',
+          )(req, reply);
+        },
+      ],
+    },
+    async (req) => {
+      const params = parseBody(integrationParams, req.params);
+      const body = parseBody(integrationBody, req.body);
+      const user = currentUser(req);
+    const adapter = listAdapters().find((item) => item.provider === params.provider);
+    if (!adapter) throw new HttpError(404, 'PROVIDER_DESCONOCIDO', `Provider "${params.provider}" no registrado.`);
+
+    const before = await getIntegration(db, params.companyId, params.provider);
+    const integrationId = await upsertIntegration(db, {
+      companyId: params.companyId,
+      provider: params.provider,
+      name: body.name,
+      enabled: body.enabled,
+    });
+
+    if (body.settings !== undefined) {
+      const parsed = adapter.settingsSchema.parse(body.settings ?? {});
+      await writeIntegrationSettings(db, integrationId, parsed as Record<string, unknown>);
+    }
+
+    if (body.credentials !== undefined && body.credentials !== null) {
+      const parsed = adapter.credentialsSchema.parse(body.credentials);
+      await writeIntegrationCredentials(db, integrationId, parsed as Record<string, unknown>);
+    }
+
+    if (body.clear_credentials) await clearIntegrationCredentials(db, integrationId);
+
+    const summary = await getIntegration(db, params.companyId, params.provider);
+    if (summary) {
+      const nextStatus = !summary.has_credentials
+        ? 'NOT_CONFIGURED'
+        : summary.status === 'NOT_CONFIGURED'
+          ? 'CONFIGURED'
+          : summary.status;
+      if (nextStatus !== summary.status) {
+        await db
+          .updateTable('company_integrations')
+          .set({ status: nextStatus })
+          .where('id', '=', integrationId)
+          .execute();
+      }
+    }
+
+    integrations.invalidate(integrationId);
+
+    const actions: Array<{ action: string; after: Json }> = [];
+    if (!before) actions.push({ action: 'INTEGRATION_CREATED', after: { provider: params.provider, enabled: body.enabled ?? true } as Json });
+    if (body.settings !== undefined) actions.push({ action: 'INTEGRATION_SETTINGS_UPDATED', after: (body.settings ?? {}) as Json });
+    if (body.credentials !== undefined || body.clear_credentials) {
+      actions.push({ action: 'INTEGRATION_CREDENTIALS_UPDATED', after: { has_credentials: Boolean(body.credentials) && !body.clear_credentials } as Json });
+    }
+    if (body.enabled !== undefined && before && body.enabled !== before.enabled) {
+      actions.push({ action: body.enabled ? 'INTEGRATION_ENABLED' : 'INTEGRATION_DISABLED', after: { enabled: body.enabled } as Json });
+    }
+
+    for (const entry of actions) {
+      await audit(db, {
+        companyId: params.companyId,
+        entityType: 'company_integration',
+        entityId: integrationId,
+        action: entry.action,
+        userId: user.id,
+        ip: req.ip,
+        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+        before: null,
+        after: entry.after,
+        metadata: { provider: params.provider } as Json,
+      });
+    }
+
+    return {
+      integration: await getIntegration(db, params.companyId, params.provider),
+      catalog: catalogEntry(params.provider),
+    };
+  });
+
+  app.post(
+    '/api/companies/:companyId/integrations/:provider/test',
+    { preHandler: [guards.requireCompany, guards.requirePermission('integrations.test')] },
+    async (req) => {
+      const params = parseBody(integrationParams, req.params);
+    const result = await integrations.testConnection(params.companyId, params.provider, {
+      actorType: 'USER',
+      actorId: 'api',
+    });
+    return { result, integration: await getIntegration(db, params.companyId, params.provider) };
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Matching RADIAN ↔ ERP                                             */
+  /* ---------------------------------------------------------------- */
+
+  app.get(
+    '/api/companies/:companyId/matches',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    const q = parseQuery(matchesQuery, req.query);
+    let query = db
+      .selectFrom('document_integration_matches as m')
+      .innerJoin('documents as d', 'd.id', 'm.document_id')
+      .select([
+        'm.id as id',
+        'm.document_id as document_id',
+        'm.company_integration_id as company_integration_id',
+        'm.match_status as match_status',
+        'm.match_method as match_method',
+        'm.confidence as confidence',
+        'm.external_id as external_id',
+        'm.external_document_type as external_document_type',
+        'm.external_number as external_number',
+        'm.matched_at as matched_at',
+        'm.last_checked_at as last_checked_at',
+        'm.error_message as error_message',
+        'd.external_uid as external_uid',
+        'd.prefix as prefix',
+        'd.folio as folio',
+        'd.issued_at as issued_at',
+        'd.total as total',
+        'd.direction as direction',
+      ])
+      .where('m.company_id', '=', companyId)
+      .orderBy('m.updated_at', 'desc')
+      .limit(q.limit);
+    if (q.status) query = query.where('m.match_status', '=', q.status);
+    return { matches: await query.execute() };
+  });
+
+  app.post(
+    '/api/companies/:companyId/documents/:documentId/match',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')] },
+    async (req) => {
+      const params = parseBody(companyParams.extend({ documentId: z.string().uuid() }), req.params);
+    const body = parseBody(matchBody, req.body);
+    const chosen = await pickIntegration(params.companyId, body.provider);
+    const resolved = await integrations.getClient(params.companyId, chosen.provider);
+
+    const doc = await loadMatchableDocument(db, params.companyId, params.documentId);
+    if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+    const outcome = await matchDocument(resolved, doc, { windowDays: body.window_days });
+    const saved = await persistMatch(db, {
+      companyId: params.companyId,
+      documentId: params.documentId,
+      companyIntegrationId: chosen.id,
+      outcome,
+      dryRun: body.dry_run,
+    });
+
+    return { document_id: params.documentId, provider: chosen.provider, outcome, saved };
+  });
+
+  app.post(
+    '/api/companies/:companyId/matches/recheck',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    const body = parseBody(matchBody, req.body);
+    const summary = await recheckMatches(db, companyId, (provider) => integrations.getClient(companyId, provider), {
+      provider: body.provider,
+      limit: body.limit,
+      windowDays: body.window_days,
+      dryRun: body.dry_run,
+    });
+    return { summary };
+  });
+
+  app.get(
+    '/api/companies/:companyId/documents/:documentId/xml',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = parseBody(companyParams.extend({ documentId: z.string().uuid() }), req.params);
+
+      const doc = await db
+        .selectFrom('documents')
+        .innerJoin('document_types', 'document_types.id', 'documents.document_type_id')
+        .selectAll('documents')
+        .select(['document_types.code as type_code', 'document_types.name as type_name'])
+        .where('documents.id', '=', documentId)
+        .where('documents.company_id', '=', companyId)
+        .executeTakeFirst();
+
+      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+      if (doc.direction !== 'ISSUED') {
+        throw new HttpError(
+          400,
+          'XML_NO_DISPONIBLE_ERP',
+          'La API de Siigo solo expone XML UBL 2.1 para Facturas de Venta emitidas. Para compras o gastos recibidos, el XML se consulta en el buzón DIAN/RADIAN.',
+        );
+      }
+
+      // 1. Check for existing match
+      const match = await db
+        .selectFrom('document_integration_matches')
+        .selectAll()
+        .where('document_id', '=', documentId)
+        .where('company_id', '=', companyId)
+        .executeTakeFirst();
+
+      let siigoInvoiceId: string | null = null;
+      if (match?.external_id && match.external_id.startsWith('SIIGO:SALES_INVOICE:')) {
+        siigoInvoiceId = match.external_id.replace('SIIGO:SALES_INVOICE:', '');
+      }
+
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+
+      // 2. If not yet matched, attempt dynamic match against Siigo
+      if (!siigoInvoiceId) {
+        const matchable = await loadMatchableDocument(db, companyId, documentId);
+        if (matchable) {
+          const outcome = await matchDocument(resolved, matchable, { windowDays: 45 });
+          if (outcome.candidate?.payload && typeof outcome.candidate.payload.siigo_id === 'string') {
+            siigoInvoiceId = outcome.candidate.payload.siigo_id;
+            const chosen = await pickIntegration(companyId, 'SIIGO');
+            await persistMatch(db, {
+              companyId,
+              documentId,
+              companyIntegrationId: chosen.id,
+              outcome,
+              dryRun: false,
+            });
+          }
+        }
+      }
+
+      if (!siigoInvoiceId) {
+        throw new HttpError(
+          404,
+          'FACTURA_NO_ENCONTRADA_SIIGO',
+          `No se encontró la factura ${doc.prefix ? `${doc.prefix}-${doc.folio}` : doc.folio || doc.external_uid} en Siigo. Verifica que esté sincronizada y emitida en el ERP.`,
+        );
+      }
+
+      try {
+        if (!siigoAdapter.getDocumentXml) {
+          throw new HttpError(500, 'NO_IMPLEMENTADO', 'El adaptador de Siigo no implementa descarga de XML.');
+        }
+        const rawXml = await siigoAdapter.getDocumentXml(resolved.client as any, siigoInvoiceId);
+        const invoice = parseUblInvoice(rawXml);
+
+        return {
+          document_id: documentId,
+          siigo_invoice_id: siigoInvoiceId,
+          invoice,
+          raw_xml: rawXml,
+        };
+      } catch (err: any) {
+        throw new HttpError(
+          502,
+          'ERROR_DESCARGA_XML_SIIGO',
+          `Error al obtener el XML UBL 2.1 desde Siigo: ${err?.message || String(err)}`,
+        );
+      }
+    },
+  );
+
+
+  /* ---------------------------------------------------------------- */
+  /* Sincronización                                                    */
+  /* ---------------------------------------------------------------- */
+
+  app.get(
+    '/api/companies/:companyId/sync/policies',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    const rows = await db.selectFrom('sync_policies').selectAll().where('company_id', '=', companyId).execute();
+    const routes = await db
+      .selectFrom('sync_policies')
+      .innerJoin('sync_routes', 'sync_routes.sync_policy_id', 'sync_policies.id')
+      .selectAll('sync_routes')
+      .where('sync_policies.company_id', '=', companyId)
+      .execute();
+    return { policies: rows, routes };
+  });
+
+  app.post(
+    '/api/companies/:companyId/sync/run',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    const body = parseBody(syncRunBody, req.body);
+    if (body.resource !== 'THIRD_PARTIES') {
+      throw new HttpError(400, 'RECURSO_NO_SOPORTADO', `Recurso "${body.resource}" aún no está soportado.`);
+    }
+    const result = await runThirdPartySync(db, integrations, companyId, {
+      resource: 'THIRD_PARTIES',
+      dryRun: body.dry_run,
+      limit: body.limit,
+      actorType: 'USER',
+      actorId: 'api',
+    });
+    return { run: result };
+  });
+
+  app.get(
+    '/api/companies/:companyId/sync/conflicts',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    const q = parseQuery(z.object({ status: z.enum(['OPEN', 'RESOLVED', 'IGNORED']).optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }), req.query);
+    let query = db
+      .selectFrom('sync_conflicts')
+      .selectAll()
+      .where('company_id', '=', companyId)
+      .orderBy('created_at', 'desc')
+      .limit(q.limit);
+    if (q.status) query = query.where('status', '=', q.status);
+    return { conflicts: await query.execute() };
+  });
+
+  app.post(
+    '/api/companies/:companyId/sync/conflicts/:id/resolve',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.resolve_conflict')] },
+    async (req) => {
+      const params = parseBody(companyParams.extend({ id: z.string().uuid() }), req.params);
+      const body = parseBody(conflictResolveBody, req.body);
+      const user = currentUser(req);
+    const conflict = await db
+      .selectFrom('sync_conflicts')
+      .selectAll()
+      .where('id', '=', params.id)
+      .where('company_id', '=', params.companyId)
       .executeTakeFirst();
-    return { created: true, id: inserted?.id };
+    if (!conflict) throw new HttpError(404, 'NO_ENCONTRADO', 'Conflicto no encontrado.');
+
+    if (body.resolution === 'SOURCE_WINS' && conflict.entity_type === 'THIRD_PARTY') {
+      const name = (conflict.source_payload as { name?: string } | null)?.name ?? null;
+      if (name) {
+        await db
+          .updateTable('third_parties')
+          .set({ legal_name: name, normalized_name: nameKey(name) })
+          .where('id', '=', conflict.entity_id)
+          .where('company_id', '=', params.companyId)
+          .execute();
+      }
+    }
+
+    await db
+      .updateTable('sync_conflicts')
+      .set({
+        status: 'RESOLVED',
+        resolution: body.resolution,
+        resolved_at: new Date(),
+        resolved_by: user.id,
+      })
+      .where('id', '=', params.id)
+      .execute();
+
+    await audit(db, {
+      companyId: params.companyId,
+      entityType: 'sync_conflicts',
+      entityId: params.id,
+      action: 'RESOLVE',
+      userId: user.id,
+      ip: req.ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+      before: { status: conflict.status, resolution: conflict.resolution } as Json,
+      after: { status: 'RESOLVED', resolution: body.resolution } as Json,
+      metadata: { resource_type: conflict.resource_type } as Json,
+    });
+
+    return { resolved: true, id: params.id };
+  });
+
+  app.get(
+    '/api/companies/:companyId/integration-runs',
+    { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
+    async (req) => {
+      const { companyId } = parseBody(companyParams, req.params);
+    const q = parseQuery(z.object({ limit: z.coerce.number().int().min(1).max(100).default(25) }), req.query);
+    const runs = await db
+      .selectFrom('integration_runs')
+      .selectAll()
+      .where('company_id', '=', companyId)
+      .orderBy('started_at', 'desc')
+      .limit(q.limit)
+      .execute();
+    return { runs };
   });
 
   /* ---------------------------------------------------------------- */
   /* Reportería                                                        */
   /* ---------------------------------------------------------------- */
 
-  app.get('/api/reporting/monthly', async (req) => {
-    const q = parseQuery(periodQuery, req.query);
+  app.get(
+    '/api/reporting/monthly',
+    { preHandler: [guards.requireCompany, guards.requirePermission('reports.read')] },
+    async (req) => {
+      const q = parseQuery(periodQuery, req.query);
     if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     const from = q.from ? periodToIndex(q.from) : null;
     const to = q.to ? periodToIndex(q.to) : null;
@@ -479,8 +1099,11 @@ export async function buildServer(
     return { periods: await query.execute() };
   });
 
-  app.get('/api/reporting/counterparties', async (req) => {
-    const q = parseQuery(counterpartiesQuery, req.query);
+  app.get(
+    '/api/reporting/counterparties',
+    { preHandler: [guards.requireCompany, guards.requirePermission('reports.read')] },
+    async (req) => {
+      const q = parseQuery(counterpartiesQuery, req.query);
     if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     const from = q.from ? periodToIndex(q.from) : null;
     const to = q.to ? periodToIndex(q.to) : null;
@@ -533,8 +1156,11 @@ export async function buildServer(
     };
   });
 
-  app.get('/api/reporting/taxes', async (req) => {
-    const q = parseQuery(periodQuery, req.query);
+  app.get(
+    '/api/reporting/taxes',
+    { preHandler: [guards.requireCompany, guards.requirePermission('reports.read')] },
+    async (req) => {
+      const q = parseQuery(periodQuery, req.query);
     if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
     const from = q.from ? periodToIndex(q.from) : null;
     const to = q.to ? periodToIndex(q.to) : null;

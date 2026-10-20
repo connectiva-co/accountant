@@ -46,13 +46,13 @@ export const FuentesDeDatos: React.FC = () => {
     if (apiOnline === false) return;
     let cancelled = false;
     const load = async () => {
+      if (!apiCompany) return;
       try {
-        const response = await api.getImports();
+        const response = await api.getImports(apiCompany.id);
         if (!cancelled) setImports(response.imports);
       } catch {
         if (!cancelled) setImports([]);
       }
-      if (!apiCompany) return;
       try {
         const response = await api.getIssues(apiCompany.id, { open: true, limit: 20 });
         if (!cancelled) setIssues(response.issues);
@@ -67,9 +67,10 @@ export const FuentesDeDatos: React.FC = () => {
   }, [apiOnline, apiCompany, lastUpdate, records.length]);
 
   const resolveIssue = async (issue: IssueRow) => {
+    if (!apiCompany) return;
     setIssueAction(issue.id);
     try {
-      await api.resolveIssue(issue.id);
+      await api.resolveIssue(issue.id, apiCompany.id);
       setIssues((prev) => prev.filter((i) => i.id !== issue.id));
     } catch {
       // Sin servidor no hay nada que resolver: se conserva la lista.

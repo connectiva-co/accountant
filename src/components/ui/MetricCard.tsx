@@ -13,6 +13,7 @@ interface MetricCardProps {
   onClick?: () => void;
   size?: 'default' | 'compact';
   className?: string;
+  loading?: boolean;
 }
 
 export const MetricCard: React.FC<MetricCardProps> = ({
@@ -25,7 +26,23 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   onClick,
   size = 'default',
   className,
+  loading = false,
 }) => {
+  if (loading) {
+    return (
+      <div className={cn('bg-surface border border-line rounded-card shadow-card px-4 py-3.5 animate-pulse', className)}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="h-3 w-20 bg-line rounded" />
+          <div className="w-3.5 h-3.5 bg-line/60 rounded-full shrink-0" />
+        </div>
+        <div className={cn('bg-line rounded mt-2.5 mb-2', size === 'default' ? 'h-7 w-32' : 'h-6 w-24')} />
+        <div className="flex items-center justify-between gap-2 mt-2">
+          <div className="h-3 w-16 bg-line rounded" />
+          <div className="h-3 w-20 bg-line/60 rounded" />
+        </div>
+      </div>
+    );
+  }
   const content = (
     <>
       <div className="flex items-center justify-between gap-2">

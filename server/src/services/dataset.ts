@@ -136,17 +136,29 @@ export async function buildDataset(
     .orderBy('documents.created_at', 'asc')
     .execute();
 
-  const taxRows = await db
-    .selectFrom('document_taxes')
-    .innerJoin('tax_types', 'tax_types.id', 'document_taxes.tax_type_id')
-    .innerJoin('documents', 'documents.id', 'document_taxes.document_id')
-    .select(['document_taxes.document_id as document_id', 'tax_types.code as code', 'document_taxes.amount as amount'])
-    .where(
-      'documents.company_id',
-      '=',
-      company.id,
-    )
-    .execute();
+  const [taxRows, matchRows] = await Promise.all([
+    db
+      .selectFrom('document_taxes')
+      .innerJoin('tax_types', 'tax_types.id', 'document_taxes.tax_type_id')
+      .innerJoin('documents', 'documents.id', 'document_taxes.document_id')
+      .select(['document_taxes.document_id as document_id', 'tax_types.code as code', 'document_taxes.amount as amount'])
+      .where('documents.company_id', '=', company.id)
+      .execute(),
+    db
+      .selectFrom('document_integration_matches')
+      .innerJoin('documents', 'documents.id', 'document_integration_matches.document_id')
+      .select([
+        'document_integration_matches.document_id as document_id',
+        'document_integration_matches.match_status as match_status',
+        'document_integration_matches.error_message as error_message',
+        'document_integration_matches.external_id as external_id',
+        'document_integration_matches.external_number as external_number',
+      ])
+      .where('documents.company_id', '=', company.id)
+      .execute(),
+  ]);
+
+  const matchByDoc = new Map(matchRows.map((m) => [m.document_id, m]));
 
   const taxesByDoc = new Map<string, Map<string, number>>();
   for (const row of taxRows) {
@@ -185,6 +197,12 @@ export async function buildDataset(
         if (column) record[column] = amount;
       }
     }
+    const match = matchByDoc.get(d.id);
+    record.id = d.id;
+    record.match_status = match?.match_status ?? 'NOT_CHECKED';
+    record.match_error = match?.error_message ?? null;
+    record.external_erp_id = match?.external_id ?? null;
+    record.external_erp_number = match?.external_number ?? null;
     return record;
   });
 

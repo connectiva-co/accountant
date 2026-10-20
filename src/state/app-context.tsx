@@ -9,7 +9,7 @@ import {
   resolvePeriod,
 } from '../utils/period';
 import { deriveCompany } from '../utils/derivations';
-import { api, ApiError, type ApiCompany, type DatasetResponse } from '../api/client';
+import { api, ApiError, type ApiCompany, type DatasetResponse, type ImportSummary } from '../api/client';
 import type { CompanyInfo } from '../config/company';
 import type {
   DocumentFilters,
@@ -61,10 +61,15 @@ interface AppContextValue {
   apiCompany: ApiCompany | null;
   /** Lista de empresas registradas en el servidor. */
   companies: ApiCompany[];
+  selectedCompanyId: string | null;
   /** Selecciona una empresa específica por su ID. */
   selectCompany: (companyId: string) => Promise<void>;
   /** Vuelve a leer /api/dataset. Devuelve false si no hay datos en el servidor. */
   reloadDataset: (companyId?: string) => Promise<boolean>;
+  /** true durante la primera carga de datos al arrancar la app. */
+  initialLoading: boolean;
+  /** true mientras se recargan los datos (p. ej. cambio de empresa). */
+  isReloading: boolean;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -96,16 +101,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [apiOnline, setApiOnline] = useState<boolean | null>(null);
   const [apiCompany, setApiCompany] = useState<ApiCompany | null>(null);
   const [companies, setCompanies] = useState<ApiCompany[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [isReloading, setIsReloading] = useState(false);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return localStorage.getItem('accountant_selected_company_id');
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
 
   useEffect(() => {
-    setCompany(deriveCompany(records));
-  }, [records]);
+    if (!apiCompany) {
+      setCompany(deriveCompany(records));
+    }
+  }, [records, apiCompany]);
 
   const applyDataset = useCallback((dataset: DatasetResponse, sourceName: string) => {
     setRecords(enrichRecords(dataset.records));
     setFileName(sourceName);
     setApiCompany(dataset.company);
+    setCompany({
+      name: dataset.company.legal_name || dataset.company.trade_name || '',
+      nit: dataset.company.nit || '',
+    });
     setDataSource('servidor');
     setApiOnline(true);
     setPeriodSelection({ kind: 'month', monthOffset: 0 });
@@ -116,18 +138,42 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
    * se conservan los registros actuales (demo) y la app sigue funcionando.
    */
   const reloadDataset = useCallback(async (targetCompanyId?: string): Promise<boolean> => {
+    setIsReloading(true);
     try {
-      const targetId = targetCompanyId || selectedCompanyId || undefined;
-      const [dataset, imports, companiesRes] = await Promise.all([
+      const storedId = typeof window !== 'undefined' ? localStorage.getItem('accountant_selected_company_id') : null;
+      const targetId = targetCompanyId || selectedCompanyId || storedId || undefined;
+      const [dataset, companiesRes] = await Promise.all([
         api.getDataset(targetId),
-        api.getImports(),
         api.getCompanies().catch(() => ({ companies: [] })),
       ]);
       setCompanies(companiesRes.companies || []);
-      if (!dataset.records.length) {
+      if (!dataset || !dataset.records) {
         setApiOnline(true);
         return false;
       }
+      if (dataset.company?.id) {
+        setSelectedCompanyId(dataset.company.id);
+        try {
+          localStorage.setItem('accountant_selected_company_id', dataset.company.id);
+        } catch {}
+      }
+      if (!dataset.records.length) {
+        setRecords([]);
+        setFileName('');
+        setApiCompany(dataset.company);
+        setCompany({
+          name: dataset.company.legal_name || dataset.company.trade_name || '',
+          nit: dataset.company.nit || '',
+        });
+        setDataSource('servidor');
+        setApiOnline(true);
+        return false;
+      }
+      // El historial de importaciones es por empresa: se pide con la empresa
+      // que acaba de devolver el dataset.
+      const imports = dataset.company?.id
+        ? await api.getImports(dataset.company.id).catch(() => ({ imports: [] as ImportSummary[] }))
+        : { imports: [] as ImportSummary[] };
       const latest = imports.imports.find(i => !targetId || i.company_nit === dataset.company.nit) || imports.imports[0];
       applyDataset(dataset, latest ? `${latest.filename} (base de datos)` : 'Accountant (base de datos)');
       return true;
@@ -148,15 +194,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setDataSource('demo');
       setPeriodSelection({ kind: 'month', monthOffset: 0 });
       return false;
+    } finally {
+      setIsReloading(false);
+      setInitialLoading(false);
     }
-  }, [applyDataset]);
+  }, [applyDataset, selectedCompanyId]);
 
   useEffect(() => {
-    void reloadDataset();
-  }, [reloadDataset]);
+    const storedId = typeof window !== 'undefined' ? localStorage.getItem('accountant_selected_company_id') : null;
+    void reloadDataset(storedId || undefined);
+  }, []);
 
   const selectCompany = useCallback(async (companyId: string) => {
     setSelectedCompanyId(companyId);
+    try {
+      localStorage.setItem('accountant_selected_company_id', companyId);
+    } catch {}
     await reloadDataset(companyId);
   }, [reloadDataset]);
 
@@ -243,8 +296,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       apiOnline,
       apiCompany,
       companies,
+      selectedCompanyId,
       selectCompany,
       reloadDataset,
+      initialLoading,
+      isReloading,
     }),
     [
       records,
@@ -270,8 +326,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       apiOnline,
       apiCompany,
       companies,
+      selectedCompanyId,
       selectCompany,
       reloadDataset,
+      initialLoading,
+      isReloading,
     ]
   );
 

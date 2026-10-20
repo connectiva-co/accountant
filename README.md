@@ -12,12 +12,14 @@ accountant/
 ├── server/         API y persistencia (Fastify + Kysely + PostgreSQL)
 │   ├── migrations/ Migraciones SQL aplicadas en orden (inmutables)
 │   └── src/
-│       ├── api/        Rutas HTTP y esquemas (zod)
-│       ├── db/         Conexión, tipos Kysely, migrador, settings
-│       ├── domain/     Texto, fechas, UID, hash, catálogos, impuestos
-│       ├── import/     Pipeline RADIAN: spreadsheet → normalización → upsert
-│       ├── reporting/  Recalculo de reportería mensual agregada
-│       └── services/   Consultas (dataset en forma RADIAN para la UI)
+│       ├── api/            Rutas HTTP y esquemas (zod)
+│       ├── db/             Conexión, tipos Kysely, migrador
+│       ├── domain/         Texto, fechas, UID, hash, catálogos, impuestos
+│       ├── import/         Pipeline RADIAN: spreadsheet → normalización → upsert
+│       ├── integrations/   Adaptadores de ERP (Siigo, World Office), matching y sync
+│       ├── reporting/      Recalculo de reportería mensual agregada
+│       ├── services/       Consultas (dataset en forma RADIAN para la UI)
+│       └── settings/       Esquema y validación de parámetros por empresa
 └── src/data/       Datos demo de referencia (sampleRadian.json, 356 filas)
 ```
 
@@ -68,11 +70,48 @@ Servidor (`cd server`):
 | `npm run typecheck`   | `tsc --noEmit` (incluye pruebas)                               |
 | `npm test`            | Pruebas unitarias e integración (usa `TEST_DATABASE_URL`)      |
 
+## Autenticación y acceso
+
+Sesión por cookies httpOnly (`acc_session`, `acc_refresh`, `acc_csrf`) con rotación de refresh,
+CSRF por header `x-csrf-token` y bloqueo por intentos fallidos. El primer OWNER se crea al
+arrancar (bootstrap) y todos los usuarios creados desde la UI reciben una **contraseña temporal**
+(`must_change_password = true`): al iniciar sesión la aplicación muestra una pantalla obligatoria
+de cambio de contraseña antes de entrar.
+
+- **Roles preset** (del sistema, no editables): `OWNER`, `COMPANY_ADMIN`, `USER_ADMIN`,
+  `ACCOUNTANT`, `INTEGRATION_MANAGER`, `REPORT_IMPORTER`; además existen roles personalizados por
+  empresa. Cada empresa tiene sus `role_permissions`; los usuarios ven los datos de cada empresa con
+  los permisos propios de esa empresa (`GET /api/me` devuelve `companies[]` con `roles` y
+  `permissions` por empresa).
+- **Permisos críticos** (`users.disable`, `users.company.*`, `users.roles.*`,
+  `users.password.reset`, `users.2fa.*`) exigen **step-up**: la contraseña debe haberse
+  confirmado en los últimos 10 minutos (si no, `401 PASO_REQUERIDO`; en la práctica, un login
+  reciente basta).
+- La UI de administración vive en **Usuarios y acceso** (gated por `users.read`): pestañas
+  Usuarios / Roles y permisos / Seguridad.
+
 ## API
 
 | Método y ruta              | Descripción                                                          |
 | -------------------------- | -------------------------------------------------------------------- |
 | `GET  /api/health`         | Estado del servicio                                                   |
+| `POST /api/auth/login`     | Login (cookies de sesión; `429` tras 10 fallos)                       |
+| `POST /api/auth/refresh`   | Rota la sesión/csrf                                                   |
+| `POST /api/auth/logout`    | Cierra la sesión                                                      |
+| `GET  /api/auth/csrf`      | Token CSRF inicial                                                    |
+| `GET  /api/me`             | Identidad + empresas accesibles con roles/permisos + csrf             |
+| `POST /api/auth/change-password` | Cambio de contraseña (actual + nueva; obligatorio si `must_change_password`) |
+| `POST /api/auth/step-up`   | Reconfirma contraseña para permisos críticos                          |
+| `GET/POST /api/users`      | Listado y creación de usuarios (devuelve `temporary_password`)        |
+| `GET/PUT /api/users/:id`   | Detalle y edición (solo `full_name`)                                  |
+| `POST /api/users/:id/disable` · `/reactivate` · `/reset-password` | Estado de cuenta y contraseña temporal (revoca sesiones) |
+| `GET/POST/DELETE /api/users/:id/companies[/:companyId]` | Membresías por empresa (`/disable`, `/reactivate`) |
+| `GET/POST/PUT /api/companies/:companyId/roles` | Roles de la empresa (los preset son de solo lectura)       |
+| `POST/DELETE /api/companies/:companyId/users/:userId/roles/:roleId` | Asignar/quitar rol |
+| `GET  /api/users/:id/sessions` · `POST .../revoke` · `POST .../revoke-all` | Sesiones activas y revocación |
+| `POST /api/users/:id/mfa/require` · `/reset` | 2FA: `501 MFA_NO_DISPONIBLE` (Fase 4)                    |
+| `GET  /api/admin/companies` | Empresas administrables por el actor (con sus permisos)              |
+| `GET  /api/permissions`     | Catálogo de permisos                                                  |
 | `GET  /api/companies`      | Empresas registradas                                                  |
 | `GET  /api/dataset`        | Documentos en forma RADIAN (alimenta la UI)                           |
 | `POST /api/imports`        | Importación multipart (`file`): idempotente por SHA-256 del archivo   |
@@ -88,6 +127,13 @@ Servidor (`cd server`):
 | `GET  /api/reporting/counterparties` | Agregado por tercero (`role`, `search`, `limit`)             |
 | `GET  /api/reporting/taxes`        | Agregado por impuesto (`from`/`to` = `AAAA-MM`)               |
 | `GET  /api/events`         | Eventos (Application response)                                        |
+| `GET  /api/companies/:id/integrations` | Integraciones + catálogo (fields, capabilities)     |
+| `PUT  /api/companies/:id/integrations/:provider` | Alta/edición de settings y credenciales cifradas |
+| `POST /api/companies/:id/integrations/:provider/test` | Prueba de conexión (auditoría)            |
+| `GET  /api/companies/:id/matches` | Estado de matching RADIAN ↔ ERP                              |
+| `POST /api/companies/:id/matches/recheck` | Revisión por lote contra el ERP                       |
+| `POST /api/companies/:id/sync/run` | Sincronización de terceros (acepta `dry_run`)              |
+| `GET  /api/companies/:id/sync/conflicts` | Conflictos abiertos                                 |
 
 Errores: `{ "error": { "code": "...", "message": "..." } }` con estado HTTP apropiado
 (`400` consulta inválida, `404` no encontrado, `422` archivo/reglas de negocio).
@@ -127,10 +173,26 @@ DATABASE_URL=postgresql://user:password@host:5432/accountant
 TEST_DATABASE_URL=postgresql://user:password@host:5432/accountant_test
 PORT=3001
 LOG_LEVEL=info
+SECRETS_MASTER_KEY=<32 bytes en base64>   # cifra credenciales de integraciones
+SECRETS_KEY_VERSION=1
+```
+
+Genera la maestra con:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
 Variables opcionales: `AUTO_MIGRATE=false` (no migrar al arrancar), `VITE_API_URL` (URL base del
 frontend).
+
+## Integraciones (ERP)
+
+La conexión con Siigo, World Office y futuros ERPs vive detrás de un adaptador genérico:
+capacidades declaradas por adapter, credenciales cifradas (AES-256-GCM), matching
+RADIAN ↔ ERP con estados (`MATCHED` / `NOT_FOUND` / `AMBIGUOUS` / `ERROR`) y sincronización de
+terceros con conflictos auditables. La UI está en **Configuración → Integraciones y
+sincronización**. Detalle, límites y guía para agregar un provider: [`docs/integrations.md`](docs/integrations.md).
 
 ---
 

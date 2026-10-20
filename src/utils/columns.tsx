@@ -1,6 +1,8 @@
+import { ErpStatusBadge } from '../components/ui/ErpStatusBadge';
 import type { ColumnDef } from '../components/ui/DataTable';
 import type { RadianRecord } from '../types/radian';
 import { StatusBadge } from '../components/ui/StatusBadge';
+import { FileText } from 'lucide-react';
 import { formatCurrency, formatDate } from './formatters';
 
 const folio = (r: RadianRecord) => (r.Prefijo ? `${r.Prefijo}-${r.Folio}` : String(r.Folio));
@@ -11,7 +13,7 @@ const partyName = (r: RadianRecord, side: 'emisor' | 'receptor') =>
 const partyNit = (r: RadianRecord, side: 'emisor' | 'receptor') =>
   String(side === 'emisor' ? r['NIT Emisor'] : r['NIT Receptor'] || '');
 
-export function invoiceColumns(side: 'emisor' | 'receptor'): ColumnDef[] {
+export function invoiceColumns(side: 'emisor' | 'receptor', onViewXml?: (record: RadianRecord) => void): ColumnDef[] {
   const partyHeader = side === 'emisor' ? 'Proveedor' : 'Cliente';
   return [
     {
@@ -65,11 +67,41 @@ export function invoiceColumns(side: 'emisor' | 'receptor'): ColumnDef[] {
     },
     {
       key: 'estado',
-      header: 'Estado',
+      header: 'Estado DIAN',
       align: 'center',
       sortValue: (r) => r.Estado || '',
       render: (r) => <StatusBadge estado={r.Estado} />,
     },
+    {
+      key: 'erp_estado',
+      header: 'Siigo / ERP',
+      align: 'center',
+      sortValue: (r) => r.match_status || '',
+      render: (r) => <ErpStatusBadge status={r.match_status} externalNumber={r.external_erp_number} errorMessage={r.match_error} />,
+    },
+    ...(side === 'receptor'
+      ? [
+          {
+            key: 'xml_accion',
+            header: 'Factura',
+            align: 'center' as const,
+            render: (r: RadianRecord) => (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onViewXml?.(r);
+                }}
+                className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-brand/10 hover:bg-brand/20 text-brand text-[11px] font-medium transition cursor-pointer border border-brand/20"
+                title="Ver factura"
+              >
+                <FileText className="w-3 h-3" />
+                Ver Factura
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 }
 
@@ -125,10 +157,17 @@ export function creditNoteColumns(): ColumnDef[] {
     },
     {
       key: 'estado',
-      header: 'Estado',
+      header: 'Estado DIAN',
       align: 'center',
       sortValue: (r) => r.Estado || '',
       render: (r) => <StatusBadge estado={r.Estado} />,
+    },
+    {
+      key: 'erp_estado',
+      header: 'Siigo / ERP',
+      align: 'center',
+      sortValue: (r) => r.match_status || '',
+      render: (r) => <ErpStatusBadge status={r.match_status} externalNumber={r.external_erp_number} errorMessage={r.match_error} />,
     },
   ];
 }
@@ -182,10 +221,17 @@ export function supportDocColumns(): ColumnDef[] {
     },
     {
       key: 'estado',
-      header: 'Estado',
+      header: 'Estado DIAN',
       align: 'center',
       sortValue: (r) => r.Estado || '',
       render: (r) => <StatusBadge estado={r.Estado} />,
+    },
+    {
+      key: 'erp_estado',
+      header: 'Siigo / ERP',
+      align: 'center',
+      sortValue: (r) => r.match_status || '',
+      render: (r) => <ErpStatusBadge status={r.match_status} externalNumber={r.external_erp_number} errorMessage={r.match_error} />,
     },
   ];
 }

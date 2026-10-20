@@ -8,15 +8,21 @@
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/cli/migrate.ts up",
+    "bootstrap": "tsx src/cli/bootstrap-owner.ts",
     "migrate:status": "tsx src/cli/migrate.ts status",
     "seed": "tsx src/cli/seed.ts",
     "import": "tsx src/cli/import.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "clean:demo": "node clean-demo.js"
   },
   "dependencies": {
+    "@connectiva-co/siigo-sdk": "file:../../siigo",
+    "@connectiva-co/worldoffice-sdk": "file:../../worldoffice-sdk",
+    "@fastify/cookie": "^11.1.2",
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^10.1.2",
+    "@node-rs/argon2": "^2.2.2",
     "fastify": "^5.2.1",
     "kysely": "^0.28.2",
     "pg": "^8.13.3",

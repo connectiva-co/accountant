@@ -34,6 +34,11 @@ export interface RadianRecord {
   // Calculated fields
   baseCalculada?: number;
   totalImpuestos?: number;
+  id?: string;
+  match_status?: 'NOT_CHECKED' | 'MATCHED' | 'NOT_FOUND' | 'AMBIGUOUS' | 'ERROR';
+  match_error?: string | null;
+  external_erp_id?: string | null;
+  external_erp_number?: string | null;
 }
 
 export interface FinancialKPIs {
@@ -108,7 +113,8 @@ export type ViewId =
   | 'terceros'
   | 'reportes'
   | 'fuentes'
-  | 'configuracion';
+  | 'configuracion'
+  | 'usuarios-acceso';
 
 export interface NavTarget {
   view: ViewId;
@@ -121,4 +127,64 @@ export interface AttentionItemData {
   count: number;
   severity: 'error' | 'warning' | 'neutral';
   target: NavTarget;
+}
+
+export interface ParsedUblLine {
+  id: string;
+  description: string;
+  quantity: number;
+  unitCode: string;
+  unitPrice: number;
+  subtotal: number;
+  taxes: Array<{
+    name: string;
+    percent: number;
+    amount: number;
+  }>;
+}
+
+export interface ParsedUblTax {
+  name: string;
+  code?: string;
+  percent: number;
+  taxableAmount: number;
+  taxAmount: number;
+}
+
+export interface ParsedUblInvoice {
+  id: string;
+  issueDate: string;
+  issueTime: string;
+  cufe: string;
+  currency: string;
+  notes: string[];
+  supplier: {
+    taxId: string;
+    dv?: string;
+    name: string;
+    commercialName?: string;
+    address?: string;
+    city?: string;
+    department?: string;
+    email?: string;
+    phone?: string;
+  };
+  customer: {
+    taxId: string;
+    dv?: string;
+    name: string;
+    address?: string;
+    city?: string;
+    department?: string;
+    email?: string;
+    phone?: string;
+  };
+  lines: ParsedUblLine[];
+  taxes: ParsedUblTax[];
+  totals: {
+    lineExtensionAmount: number;
+    taxExclusiveAmount: number;
+    taxInclusiveAmount: number;
+    payableAmount: number;
+  };
 }

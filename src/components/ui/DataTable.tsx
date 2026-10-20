@@ -47,6 +47,9 @@ function applyFilters(rows: RadianRecord[], f: DocumentFilters): RadianRecord[] 
         String(r['NIT Receptor']),
         r['Tipo de documento'],
         r['Estado'],
+        r.match_status === 'MATCHED' ? 'en siigo erp contabilizado' : '',
+        r.match_status === 'NOT_FOUND' ? 'pendiente erp' : '',
+        String(r.external_erp_number || ''),
       ]
         .join(' ')
         .toLowerCase();
