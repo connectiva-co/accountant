@@ -30,7 +30,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
 }) => {
   if (loading) {
     return (
-      <div className={cn('bg-surface border border-line rounded-card shadow-card px-4 py-3.5 animate-pulse', className)}>
+      <div className={cn('bg-surface border border-line rounded-card shadow-card px-4 py-3.5', className)}>
         <div className="flex items-center justify-between gap-2">
           <div className="h-3 w-20 bg-line rounded" />
           <div className="w-3.5 h-3.5 bg-line/60 rounded-full shrink-0" />

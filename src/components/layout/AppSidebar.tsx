@@ -108,7 +108,6 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({ counts = {}, mobileOpen 
                 <Database className="w-3 h-3 text-brand" />
                 <span>Fuente activa</span>
               </div>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <div className="text-[11.5px] font-medium text-ink truncate mt-1" title={fileName}>
               RADIAN / DIAN

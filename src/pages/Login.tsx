@@ -76,7 +76,6 @@ export const LoginPage: React.FC = () => {
             <span className="text-3xl font-extrabold tracking-tight text-white font-sans">
               {APP_NAME}
             </span>
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           </div>
         </div>
       </div>

@@ -63,7 +63,7 @@ export const ErpStatusBadge: React.FC<ErpStatusBadgeProps> = ({ status = 'NOT_CH
           )}
           title={cleanMsg}
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0 animate-pulse" />
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
           Error ERP
         </span>
       );
