@@ -10,7 +10,7 @@ import { InvoiceViewerModal } from '../components/ui/InvoiceViewerModal';
 import type { RadianRecord } from '../types/radian';
 
 export const Ventas: React.FC = () => {
-  const { periodRecords, period, filters, setFilters, kpis, selectedCompanyId } = useApp();
+  const { periodRecords, period, filters, setFilters, kpis, selectedCompanyId, reloadDataset } = useApp();
   const [selectedRecordForXml, setSelectedRecordForXml] = useState<RadianRecord | null>(null);
 
   const rows = useMemo(() => filterRecords(periodRecords, 'ventas'), [periodRecords]);
@@ -57,6 +57,7 @@ export const Ventas: React.FC = () => {
           document={selectedRecordForXml}
           companyId={selectedCompanyId}
           onClose={() => setSelectedRecordForXml(null)}
+          onTaxesSaved={() => void reloadDataset()}
         />
       )}
     </>

@@ -974,6 +974,128 @@ export async function buildServer(
 
 
   /* ---------------------------------------------------------------- */
+  /* Impuestos y Retenciones del Documento                            */
+  /* ---------------------------------------------------------------- */
+
+  const updateDocumentTaxesBody = z.object({
+    taxes: z.array(
+      z.object({
+        tax_code: z.string(),
+        taxable_base: z.number().nonnegative(),
+        rate: z.number().nullable().optional(),
+        amount: z.number().nonnegative(),
+      }),
+    ),
+  });
+
+  const companyDocParams = companyParams.extend({ documentId: z.string().uuid() });
+
+  app.get(
+    '/api/companies/:companyId/documents/:documentId/taxes',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = parseBody(companyDocParams, req.params);
+      const doc = await db
+        .selectFrom('documents')
+        .select(['id'])
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .executeTakeFirst();
+      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+      const rows = await db
+        .selectFrom('document_taxes as dt')
+        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
+        .select(['tt.code as tax_code', 'tt.name as tax_name', 'dt.taxable_base', 'dt.rate', 'dt.amount'])
+        .where('dt.document_id', '=', documentId)
+        .execute();
+
+      return {
+        document_id: documentId,
+        taxes: rows.map((r) => ({
+          tax_code: r.tax_code,
+          tax_name: r.tax_name,
+          taxable_base: Number(r.taxable_base ?? 0),
+          rate: r.rate !== null ? Number(r.rate) : null,
+          amount: Number(r.amount),
+        })),
+      };
+    },
+  );
+
+  app.put(
+    '/api/companies/:companyId/documents/:documentId/taxes',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = parseBody(companyDocParams, req.params);
+      const body = parseBody(updateDocumentTaxesBody, req.body);
+
+      const doc = await db
+        .selectFrom('documents')
+        .select(['id'])
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .executeTakeFirst();
+      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+      const allTaxTypes = await db
+        .selectFrom('tax_types')
+        .select(['id', 'code'])
+        .execute();
+      const taxTypeMap = new Map(allTaxTypes.map((t) => [t.code, t.id]));
+
+      const managedCodes = ['RENTA_RETE', 'ICA_RETE', 'IVA_RETE'];
+      const managedTypeIds: string[] = managedCodes
+        .map((c) => taxTypeMap.get(c))
+        .filter((id): id is string => typeof id === 'string');
+
+      await db.transaction().execute(async (trx) => {
+        if (managedTypeIds.length > 0) {
+          await trx
+            .deleteFrom('document_taxes')
+            .where('document_id', '=', documentId)
+            .where('tax_type_id', 'in', managedTypeIds)
+            .execute();
+        }
+
+        for (const item of body.taxes) {
+          const typeId = taxTypeMap.get(item.tax_code);
+          if (!typeId || item.amount <= 0) continue;
+
+          await trx
+            .insertInto('document_taxes')
+            .values({
+              document_id: documentId,
+              tax_type_id: typeId,
+              taxable_base: sql`${item.taxable_base}::numeric`,
+              rate: item.rate !== null && item.rate !== undefined ? sql`${item.rate}::numeric` : null,
+              amount: sql`${item.amount}::numeric`,
+            })
+            .execute();
+        }
+      });
+
+      const updated = await db
+        .selectFrom('document_taxes as dt')
+        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
+        .select(['tt.code as tax_code', 'tt.name as tax_name', 'dt.taxable_base', 'dt.rate', 'dt.amount'])
+        .where('dt.document_id', '=', documentId)
+        .execute();
+
+      return {
+        document_id: documentId,
+        taxes: updated.map((r) => ({
+          tax_code: r.tax_code,
+          tax_name: r.tax_name,
+          taxable_base: Number(r.taxable_base ?? 0),
+          rate: r.rate !== null ? Number(r.rate) : null,
+          amount: Number(r.amount),
+        })),
+      };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
   /* Sincronización                                                    */
   /* ---------------------------------------------------------------- */
 

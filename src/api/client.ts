@@ -611,6 +611,43 @@ export const api = {
       raw_xml: string;
     }>(`/api/companies/${companyId}/documents/${documentId}/xml`),
 
+  getDocumentTaxes: (companyId: string, documentId: string) =>
+    request<{
+      document_id: string;
+      taxes: Array<{
+        tax_code: string;
+        tax_name: string;
+        taxable_base: number;
+        rate: number | null;
+        amount: number;
+      }>;
+    }>(`/api/companies/${companyId}/documents/${documentId}/taxes`),
+
+  updateDocumentTaxes: (
+    companyId: string,
+    documentId: string,
+    taxes: Array<{
+      tax_code: string;
+      taxable_base: number;
+      rate?: number | null;
+      amount: number;
+    }>,
+  ) =>
+    request<{
+      document_id: string;
+      taxes: Array<{
+        tax_code: string;
+        tax_name: string;
+        taxable_base: number;
+        rate: number | null;
+        amount: number;
+      }>;
+    }>(`/api/companies/${companyId}/documents/${documentId}/taxes`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taxes }),
+    }),
+
   resolveConflict: (companyId: string, conflictId: string, resolution: string) =>
     request<{ resolved: boolean; id: string }>(
       `/api/companies/${companyId}/sync/conflicts/${conflictId}/resolve`,
