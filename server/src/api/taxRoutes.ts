@@ -8,7 +8,15 @@ import { HttpError } from './errors.js';
 import { TaxEngine } from '../domain/tax-engine.js';
 
 const parse = <S extends z.ZodTypeAny>(schema: S, value: unknown): z.output<S> => {
-  const res = schema.safeParse(value);
+  let val = value;
+  if (typeof val === 'string') {
+    try {
+      val = JSON.parse(val);
+    } catch {
+      // mantener como string si no es json
+    }
+  }
+  const res = schema.safeParse(val ?? {});
   if (!res.success) {
     throw new HttpError(400, 'INVALIDO', res.error.issues[0]?.message ?? 'Dato inválido.');
   }
