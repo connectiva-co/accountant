@@ -448,6 +448,18 @@ export interface TaxDeterminationDto {
   ruleSnapshot?: Record<string, unknown>;
 }
 
+
+function resolveEffectiveCompanyId(companyId?: string | null): string {
+  if (companyId && companyId !== 'undefined' && companyId !== 'null') return companyId;
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('accountant_selected_company_id');
+      if (stored) return stored;
+    } catch {}
+  }
+  return 'c92e7f20-3aff-4c6d-860e-795bbf5c061d';
+}
+
 export const api = {
   baseUrl: BASE,
 
@@ -684,13 +696,15 @@ export const api = {
       `/api/companies/${companyId}/sync/conflicts${options.status ? `?status=${options.status}` : ''}`,
     ),
 
-  getDocumentXml: (companyId: string, documentId: string) =>
-    request<{
+  getDocumentXml: (companyId: string | null | undefined, documentId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{
       document_id: string;
       siigo_invoice_id: string;
       invoice: ParsedUblInvoice;
       raw_xml: string;
-    }>(`/api/companies/${companyId}/documents/${documentId}/xml`),
+    }>(`/api/companies/${cId}/documents/${documentId}/xml`);
+  },
 
 
   getTaxConcepts: () =>
@@ -699,50 +713,63 @@ export const api = {
   getTaxResponsibilities: () =>
     request<{ responsibilities: TaxResponsibilityDto[] }>('/api/tax-responsibilities'),
 
-  getThirdPartyTaxProfile: (companyId: string, thirdPartyId: string) =>
-    request<{ profile: ThirdPartyTaxProfileDto | null }>(
-      `/api/companies/${companyId}/third-parties/${thirdPartyId}/tax-profile`
-    ),
+  getThirdPartyTaxProfile: (companyId: string | null | undefined, thirdPartyId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ profile: ThirdPartyTaxProfileDto | null }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-profile`
+    );
+  },
 
-  saveThirdPartyTaxProfile: (companyId: string, thirdPartyId: string, data: UpsertTaxProfileInput) =>
-    request<{ profile: ThirdPartyTaxProfileDto }>(
-      `/api/companies/${companyId}/third-parties/${thirdPartyId}/tax-profile`,
+  saveThirdPartyTaxProfile: (companyId: string | null | undefined, thirdPartyId: string, data: UpsertTaxProfileInput) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ profile: ThirdPartyTaxProfileDto }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-profile`,
       {
         method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       }
-    ),
+    );
+  },
 
-  getDocumentTaxDeterminations: (companyId: string, documentId: string) =>
-    request<{ determinations: TaxDeterminationDto[] }>(
-      `/api/companies/${companyId}/documents/${documentId}/tax-determinations`
-    ),
+  getDocumentTaxDeterminations: (companyId: string | null | undefined, documentId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ determinations: TaxDeterminationDto[] }>(
+      `/api/companies/${cId}/documents/${documentId}/tax-determinations`
+    );
+  },
 
   calculateDocumentTaxes: (
-    companyId: string,
+    companyId: string | null | undefined,
     documentId: string,
     input: { renta_concept_id?: string | null; ica_concept_id?: string | null }
-  ) =>
-    request<{ determinations: TaxDeterminationDto[] }>(
-      `/api/companies/${companyId}/documents/${documentId}/tax-determinations/calculate`,
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ determinations: TaxDeterminationDto[] }>(
+      `/api/companies/${cId}/documents/${documentId}/tax-determinations/calculate`,
       {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       }
-    ),
+    );
+  },
 
   overrideDocumentTax: (
-    companyId: string,
+    companyId: string | null | undefined,
     documentId: string,
     input: { tax_type_id: string; override_rate: number; override_amount: number; reason: string }
-  ) =>
-    request<{ determination: TaxDeterminationDto }>(
-      `/api/companies/${companyId}/documents/${documentId}/tax-determinations/override`,
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ determination: TaxDeterminationDto }>(
+      `/api/companies/${cId}/documents/${documentId}/tax-determinations/override`,
       {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       }
-    ),
+    );
+  },
 
   getDocumentTaxes: (companyId: string, documentId: string) =>
     request<{

@@ -33,25 +33,30 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
   const [copiedCufe, setCopiedCufe] = useState(false);
   const [showRawXml, setShowRawXml] = useState(false);
 
+  const effectiveCompanyId =
+    companyId ||
+    (typeof window !== 'undefined' ? localStorage.getItem('accountant_selected_company_id') : null) ||
+    'c92e7f20-3aff-4c6d-860e-795bbf5c061d';
+
   const docFolio = document.Prefijo ? `${document.Prefijo}-${document.Folio}` : String(document.Folio);
 
   const fetchXml = React.useCallback(async () => {
-    if (!companyId || !document.id) {
-      setError('Documento o empresa no identificados.');
+    if (!document.id) {
+      setError('Documento no identificado.');
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const res = await api.getDocumentXml(companyId, document.id);
+      const res = await api.getDocumentXml(effectiveCompanyId, document.id);
       setData({ invoice: res.invoice, raw_xml: res.raw_xml });
       setLoading(false);
     } catch (err: any) {
       setError(err?.message || 'No se pudo obtener el XML oficial desde Siigo.');
       setLoading(false);
     }
-  }, [companyId, document.id]);
+  }, [effectiveCompanyId, document.id]);
 
   useEffect(() => {
     void fetchXml();
@@ -172,7 +177,7 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
               {document.id && (
                 <InvoiceTaxLiquidator
                   documentId={document.id}
-                  companyId={companyId}
+                  companyId={effectiveCompanyId}
                   defaultBase={document.baseCalculada || Math.max(0, (document.Total || 0) - (document.IVA || 0))}
                   totalDocument={document.Total || 0}
                   ivaDocument={document.IVA || 0}

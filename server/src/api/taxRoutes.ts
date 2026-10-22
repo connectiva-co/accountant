@@ -26,10 +26,10 @@ const thirdPartyProfileParams = z.object({
 }));
 
 const documentParams = z.object({
-  companyId: z.string().uuid().optional(),
-  company_id: z.string().uuid().optional(),
-  documentId: z.string().uuid().optional(),
-  document_id: z.string().uuid().optional(),
+  companyId: z.string().min(1).optional(),
+  company_id: z.string().min(1).optional(),
+  documentId: z.string().min(1).optional(),
+  document_id: z.string().min(1).optional(),
 }).transform((val) => ({
   companyId: (val.companyId ?? val.company_id)!,
   documentId: (val.documentId ?? val.document_id)!,
@@ -355,6 +355,17 @@ export function registerTaxRoutes(
     async (req) => {
       const { companyId, documentId } = parse(documentParams, req.params);
 
+      let actualDocId = documentId;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(documentId)) {
+        const doc = await db
+          .selectFrom('documents')
+          .select('id')
+          .where('company_id', '=', companyId)
+          .where((eb) => eb.or([eb('external_uid', '=', documentId), eb('folio', '=', documentId)]))
+          .executeTakeFirst();
+        if (doc) actualDocId = doc.id;
+      }
+
       const rows = await db
         .selectFrom('document_tax_determinations as d')
         .innerJoin('tax_types as tt', 'tt.id', 'd.tax_type_id')
@@ -381,7 +392,7 @@ export function registerTaxRoutes(
           'd.rule_snapshot as rule_snapshot',
           'd.calculated_at as calculated_at',
         ])
-        .where('d.document_id', '=', documentId)
+        .where('d.document_id', '=', actualDocId)
         .where('d.company_id', '=', companyId)
         .execute();
 

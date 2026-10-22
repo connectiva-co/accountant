@@ -40,8 +40,9 @@ export class TaxEngine {
   ): Promise<TaxDeterminationResult[]> {
     const { companyId, documentId, rentaConceptId, icaConceptId, userId } = input;
 
-    // 1. Obtener documento y terceros
-    const document = await db
+    // 1. Obtener documento y terceros (soporta UUID, CUFE/external_uid o folio)
+    const isDocUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(documentId);
+    let docQuery = db
       .selectFrom('documents')
       .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
       .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
@@ -60,9 +61,19 @@ export class TaxEngine {
         'receiver.tax_id as receiver_tax_id',
         'receiver.legal_name as receiver_name',
       ])
-      .where('documents.id', '=', documentId)
-      .where('documents.company_id', '=', companyId)
-      .executeTakeFirst();
+      .where('documents.company_id', '=', companyId);
+
+    if (isDocUuid) {
+      docQuery = docQuery.where('documents.id', '=', documentId);
+    } else {
+      docQuery = docQuery.where((eb) =>
+        eb.or([
+          eb('documents.external_uid', '=', documentId),
+          eb('documents.folio', '=', documentId),
+        ])
+      );
+    }
+    const document = await docQuery.executeTakeFirst();
 
     if (!document) {
       throw new Error(`Documento no encontrado o no pertenece a la empresa: ${documentId}`);
@@ -400,7 +411,7 @@ export class TaxEngine {
         .insertInto('document_tax_determinations')
         .values({
           company_id: companyId,
-          document_id: documentId,
+          document_id: document.id,
           tax_type_id: res.taxTypeId,
           tax_concept_id: res.taxConceptId,
           tax_rule_id: res.taxRuleId,
