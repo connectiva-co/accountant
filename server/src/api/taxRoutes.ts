@@ -16,14 +16,24 @@ const parse = <S extends z.ZodTypeAny>(schema: S, value: unknown): z.output<S> =
 };
 
 const thirdPartyProfileParams = z.object({
-  company_id: z.string().uuid(),
-  third_party_id: z.string().min(1),
-});
+  companyId: z.string().uuid().optional(),
+  company_id: z.string().uuid().optional(),
+  thirdPartyId: z.string().min(1).optional(),
+  third_party_id: z.string().min(1).optional(),
+}).transform((val) => ({
+  companyId: (val.companyId ?? val.company_id)!,
+  thirdPartyId: (val.thirdPartyId ?? val.third_party_id)!,
+}));
 
 const documentParams = z.object({
-  company_id: z.string().uuid(),
-  document_id: z.string().uuid(),
-});
+  companyId: z.string().uuid().optional(),
+  company_id: z.string().uuid().optional(),
+  documentId: z.string().uuid().optional(),
+  document_id: z.string().uuid().optional(),
+}).transform((val) => ({
+  companyId: (val.companyId ?? val.company_id)!,
+  documentId: (val.documentId ?? val.document_id)!,
+}));
 
 const profileUpsertSchema = z.object({
   person_type: z.enum(['NATURAL', 'JURIDICA']).default('JURIDICA'),
@@ -94,19 +104,18 @@ export function registerTaxRoutes(
     }
   );
 
-  // 3. Consultar perfil tributario de un tercero
+  // 3. Consultar perfil tributario de un tercero (soporta UUID o NIT)
   app.get(
-    '/api/companies/:company_id/third-parties/:third_party_id/tax-profile',
+    '/api/companies/:companyId/third-parties/:thirdPartyId/tax-profile',
     { preHandler: [guards.requireCompany, guards.requirePermission('tax_profiles.read')] },
     async (req) => {
-      const { company_id, third_party_id: identifier } = parse(thirdPartyProfileParams, req.params);
+      const { companyId, thirdPartyId: identifier } = parse(thirdPartyProfileParams, req.params);
 
-      // Resolver tercero por id o tax_id (NIT)
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
       let tpQuery = db
         .selectFrom('third_parties')
         .select(['id', 'tax_id', 'legal_name'])
-        .where('company_id', '=', company_id);
+        .where('company_id', '=', companyId);
 
       if (isUuid) {
         tpQuery = tpQuery.where('id', '=', identifier);
@@ -122,7 +131,7 @@ export function registerTaxRoutes(
       const profile = await db
         .selectFrom('third_party_tax_profiles')
         .selectAll()
-        .where('company_id', '=', company_id)
+        .where('company_id', '=', companyId)
         .where('third_party_id', '=', tp.id)
         .orderBy('valid_from', 'desc')
         .executeTakeFirst();
@@ -150,19 +159,18 @@ export function registerTaxRoutes(
 
   // 4. Crear o actualizar perfil tributario de un tercero
   app.put(
-    '/api/companies/:company_id/third-parties/:third_party_id/tax-profile',
+    '/api/companies/:companyId/third-parties/:thirdPartyId/tax-profile',
     { preHandler: [guards.requireCompany, guards.requirePermission('tax_profiles.write')] },
     async (req) => {
-      const { company_id, third_party_id: identifier } = parse(thirdPartyProfileParams, req.params);
+      const { companyId, thirdPartyId: identifier } = parse(thirdPartyProfileParams, req.params);
       const body = parse(profileUpsertSchema, req.body);
       const user = currentUser(req);
 
-      // Resolver tercero por id o tax_id (NIT)
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(identifier);
       let tpQuery = db
         .selectFrom('third_parties')
         .select(['id', 'tax_id', 'legal_name'])
-        .where('company_id', '=', company_id);
+        .where('company_id', '=', companyId);
 
       if (isUuid) {
         tpQuery = tpQuery.where('id', '=', identifier);
@@ -172,7 +180,60 @@ export function registerTaxRoutes(
       const thirdParty = await tpQuery.executeTakeFirst();
 
       if (!thirdParty) {
-        throw new HttpError(404, 'TERCERO_NO_ENCONTRADO', 'El tercero no existe en esta empresa.');
+        // Si el tercero aún no está en third_parties (ej: Consumidor Final 222222222222), crearlo automáticamente
+        const createdTp = await db
+          .insertInto('third_parties')
+          .values({
+            company_id: companyId,
+            tax_id: identifier,
+            legal_name: identifier === '222222222222' ? 'Consumidor Final' : 'Tercero Facturación',
+            normalized_name: identifier === '222222222222' ? 'CONSUMIDOR FINAL' : 'TERCERO FACTURACION',
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        const createdProfile = await db
+          .insertInto('third_party_tax_profiles')
+          .values({
+            company_id: companyId,
+            third_party_id: createdTp.id,
+            person_type: body.person_type,
+            tax_regime: body.tax_regime,
+            economic_activity_code: body.economic_activity_code ?? null,
+            ica_municipality_code: body.ica_municipality_code,
+            is_declarant_renta: body.is_declarant_renta,
+            valid_from: body.valid_from ?? new Date().toISOString().slice(0, 10),
+            valid_to: body.valid_to ?? '9999-12-31',
+          })
+          .returningAll()
+          .executeTakeFirstOrThrow();
+
+        if (body.responsibility_ids.length > 0) {
+          await db
+            .insertInto('third_party_tax_responsibilities')
+            .values(
+              body.responsibility_ids.map((rid) => ({
+                profile_id: createdProfile.id,
+                responsibility_id: rid,
+              }))
+            )
+            .execute();
+        }
+
+        const responsibilities = await db
+          .selectFrom('third_party_tax_responsibilities as tr')
+          .innerJoin('tax_responsibilities as r', 'r.id', 'tr.responsibility_id')
+          .select(['r.id', 'r.code', 'r.name', 'r.description'])
+          .where('tr.profile_id', '=', createdProfile.id)
+          .execute();
+
+        return {
+          third_party: createdTp,
+          profile: {
+            ...createdProfile,
+            responsibilities,
+          },
+        };
       }
 
       const thirdPartyId = thirdParty.id;
@@ -181,7 +242,7 @@ export function registerTaxRoutes(
       const existing = await db
         .selectFrom('third_party_tax_profiles')
         .selectAll()
-        .where('company_id', '=', company_id)
+        .where('company_id', '=', companyId)
         .where('third_party_id', '=', thirdPartyId)
         .orderBy('valid_from', 'desc')
         .executeTakeFirst();
@@ -208,7 +269,7 @@ export function registerTaxRoutes(
         const created = await db
           .insertInto('third_party_tax_profiles')
           .values({
-            company_id,
+            company_id: companyId,
             third_party_id: thirdPartyId,
             person_type: body.person_type,
             tax_regime: body.tax_regime,
@@ -246,7 +307,7 @@ export function registerTaxRoutes(
         await db
           .insertInto('audit_log')
           .values({
-            company_id,
+            company_id: companyId,
             actor_user_id: user.id,
             action: 'TAX_PROFILE_UPDATED',
             entity_type: 'THIRD_PARTY_TAX_PROFILE',
@@ -264,7 +325,6 @@ export function registerTaxRoutes(
           .execute();
       }
 
-      // Devolver perfil con responsabilidades
       const updatedProfile = await db
         .selectFrom('third_party_tax_profiles')
         .selectAll()
@@ -290,10 +350,10 @@ export function registerTaxRoutes(
 
   // 5. Consultar determinaciones tributarias de un documento
   app.get(
-    '/api/companies/:company_id/documents/:document_id/tax-determinations',
+    '/api/companies/:companyId/documents/:documentId/tax-determinations',
     { preHandler: [guards.requireCompany, guards.requirePermission('tax_calculations.calculate')] },
     async (req) => {
-      const { company_id, document_id } = parse(documentParams, req.params);
+      const { companyId, documentId } = parse(documentParams, req.params);
 
       const rows = await db
         .selectFrom('document_tax_determinations as d')
@@ -321,8 +381,8 @@ export function registerTaxRoutes(
           'd.rule_snapshot as rule_snapshot',
           'd.calculated_at as calculated_at',
         ])
-        .where('d.document_id', '=', document_id)
-        .where('d.company_id', '=', company_id)
+        .where('d.document_id', '=', documentId)
+        .where('d.company_id', '=', companyId)
         .execute();
 
       return {
@@ -342,16 +402,16 @@ export function registerTaxRoutes(
 
   // 6. Liquidar retenciones mediante el motor tributario
   app.post(
-    '/api/companies/:company_id/documents/:document_id/tax-determinations/calculate',
+    '/api/companies/:companyId/documents/:documentId/tax-determinations/calculate',
     { preHandler: [guards.requireCompany, guards.requirePermission('tax_calculations.calculate')] },
     async (req) => {
-      const { company_id, document_id } = parse(documentParams, req.params);
+      const { companyId, documentId } = parse(documentParams, req.params);
       const body = parse(calculateBodySchema, req.body);
       const user = currentUser(req);
 
       const results = await TaxEngine.determine(db, {
-        companyId: company_id,
-        documentId: document_id,
+        companyId,
+        documentId,
         rentaConceptId: body.renta_concept_id,
         icaConceptId: body.ica_concept_id,
         userId: user?.id,
@@ -363,10 +423,10 @@ export function registerTaxRoutes(
 
   // 7. Modificar/sobrescribir retención con justificación contable obligatoria
   app.post(
-    '/api/companies/:company_id/documents/:document_id/tax-determinations/override',
+    '/api/companies/:companyId/documents/:documentId/tax-determinations/override',
     { preHandler: [guards.requireCompany, guards.requirePermission('tax_calculations.override')] },
     async (req) => {
-      const { company_id, document_id } = parse(documentParams, req.params);
+      const { companyId, documentId } = parse(documentParams, req.params);
       const body = parse(overrideBodySchema, req.body);
       const user = currentUser(req);
 
@@ -375,8 +435,8 @@ export function registerTaxRoutes(
       }
 
       const result = await TaxEngine.override(db, {
-        companyId: company_id,
-        documentId: document_id,
+        companyId,
+        documentId,
         taxTypeId: body.tax_type_id,
         overrideRate: body.override_rate,
         overrideAmount: body.override_amount,

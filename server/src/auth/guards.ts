@@ -59,7 +59,7 @@ function extractCompanyId(req: FastifyRequest): string | undefined {
   const params = (req.params ?? {}) as Record<string, unknown>;
   const query = (req.query ?? {}) as Record<string, unknown>;
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const raw = params.companyId ?? query.company_id ?? body.company_id;
+  const raw = params.companyId ?? params.company_id ?? query.company_id ?? query.companyId ?? body.company_id ?? body.companyId;
   if (typeof raw !== 'string' || raw.length === 0) return undefined;
   return raw;
 }
