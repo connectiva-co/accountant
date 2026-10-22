@@ -407,6 +407,12 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
               <InvoiceTaxLiquidator
                 documentId={document.id || ''}
                 companyId={companyId}
+                thirdPartyIdentifier={String(
+                  document.Grupo === 'Emitido' ? document['NIT Receptor'] : document['NIT Emisor']
+                )}
+                thirdPartyName={String(
+                  document.Grupo === 'Emitido' ? document['Nombre Receptor'] : document['Nombre Emisor']
+                )}
                 defaultBase={document.baseCalculada || data.invoice.totals.lineExtensionAmount || (document.Total - (document.IVA || 0))}
                 totalDocument={document.Total || data.invoice.totals.payableAmount}
                 ivaDocument={document.IVA || (data.invoice.totals.taxInclusiveAmount - data.invoice.totals.taxExclusiveAmount)}

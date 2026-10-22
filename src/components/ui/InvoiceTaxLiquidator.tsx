@@ -1,322 +1,593 @@
-import React, { useEffect, useState } from 'react';
-import { api } from '../../api/client';
+import React, { useEffect, useState, useMemo } from 'react';
+import {
+  ShieldCheck,
+  Building2,
+  User,
+  Calculator,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  AlertTriangle,
+  HelpCircle,
+  Edit3,
+  ExternalLink,
+} from 'lucide-react';
+import {
+  api,
+  type TaxConceptDto,
+  type TaxDeterminationDto,
+  type ThirdPartyTaxProfileDto,
+} from '../../api/client';
 import { formatCurrency } from '../../utils/formatters';
-import { Check, Loader2, Calculator, AlertCircle } from 'lucide-react';
+import { ThirdPartyTaxProfileModal } from './ThirdPartyTaxProfileModal';
 
 interface InvoiceTaxLiquidatorProps {
   documentId: string;
   companyId: string | null;
+  thirdPartyIdentifier?: string;
+  thirdPartyName?: string;
   defaultBase: number;
   totalDocument: number;
   ivaDocument: number;
   onTaxesSaved?: () => void;
 }
 
-const RETEFUENTE_PRESETS = [
-  { label: '0%', rate: 0, desc: 'Sin retención' },
-  { label: '2.5%', rate: 2.5, desc: 'Compras declarantes' },
-  { label: '3.5%', rate: 3.5, desc: 'Compras no declarantes' },
-  { label: '4.0%', rate: 4.0, desc: 'Servicios declarantes' },
-  { label: '6.0%', rate: 6.0, desc: 'Servicios no declarantes' },
-  { label: '11.0%', rate: 11.0, desc: 'Honorarios' },
-];
-
-const RETEICA_PRESETS = [
-  { label: '0‰', ratePerMil: 0, desc: 'Sin ReteICA' },
-  { label: '4.14‰', ratePerMil: 4.14, desc: 'Industrial' },
-  { label: '6.90‰', ratePerMil: 6.90, desc: 'Comercial' },
-  { label: '9.66‰', ratePerMil: 9.66, desc: 'Servicios' },
-  { label: '11.04‰', ratePerMil: 11.04, desc: 'Financiero/Otros' },
-];
-
-const RETEIVA_PRESETS = [
-  { label: '0%', rate: 0, desc: 'Sin ReteIVA' },
-  { label: '15%', rate: 15.0, desc: '15% del IVA facturado' },
-];
-
 export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   documentId,
   companyId,
+  thirdPartyIdentifier,
+  thirdPartyName,
   defaultBase,
   totalDocument,
-  ivaDocument,
+  ivaDocument: _ivaDocument,
   onTaxesSaved,
 }) => {
-  const [base, setBase] = useState<number>(defaultBase > 0 ? defaultBase : Math.max(0, totalDocument - ivaDocument));
-  const [customBaseInput, setCustomBaseInput] = useState<string>('');
-
-  // Selected rates
-  const [reteFuenteRate, setReteFuenteRate] = useState<number>(0);
-  const [reteIcaRatePerMil, setReteIcaRatePerMil] = useState<number>(0);
-  const [reteIvaRate, setReteIvaRate] = useState<number>(0);
-
-  // Loading & feedback states
   const [loading, setLoading] = useState<boolean>(true);
-  const [saving, setSaving] = useState<boolean>(false);
-  const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [calculating, setCalculating] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Load existing saved taxes if present
-  useEffect(() => {
-    let active = true;
-    const fetchExistingTaxes = async () => {
-      if (!companyId) {
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      try {
-        const res = await api.getDocumentTaxes(companyId, documentId);
-        if (active && res.taxes.length > 0) {
-          for (const t of res.taxes) {
-            if (t.tax_code === 'RENTA_RETE') {
-              if (t.taxable_base > 0) setBase(t.taxable_base);
-              if (t.rate !== null && t.rate !== undefined) setReteFuenteRate(t.rate);
-              else if (t.taxable_base > 0) setReteFuenteRate(Math.round((t.amount / t.taxable_base) * 10000) / 100);
-            }
-            if (t.tax_code === 'ICA_RETE') {
-              if (t.rate !== null && t.rate !== undefined) setReteIcaRatePerMil(t.rate);
-              else if (t.taxable_base > 0) setReteIcaRatePerMil(Math.round((t.amount / t.taxable_base) * 100000) / 100);
-            }
-            if (t.tax_code === 'IVA_RETE') {
-              if (t.rate !== null && t.rate !== undefined) setReteIvaRate(t.rate);
-              else if (ivaDocument > 0) setReteIvaRate(Math.round((t.amount / ivaDocument) * 10000) / 100);
-            }
-          }
-        }
-      } catch {
-        // Silently use defaults if no saved taxes yet
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
+  // Catálogos y datos
+  const [concepts, setConcepts] = useState<TaxConceptDto[]>([]);
+  const [profile, setProfile] = useState<ThirdPartyTaxProfileDto | null>(null);
+  const [determinations, setDeterminations] = useState<TaxDeterminationDto[]>([]);
 
-    void fetchExistingTaxes();
-    return () => {
-      active = false;
-    };
-  }, [companyId, documentId, ivaDocument]);
+  // Selección de conceptos
+  const [selectedRentaConceptId, setSelectedRentaConceptId] = useState<string>('');
+  const [selectedIcaConceptId, setSelectedIcaConceptId] = useState<string>('');
 
-  // Calculations
-  const activeBase = customBaseInput !== '' ? Number(customBaseInput) || 0 : base;
-  const reteFuenteAmount = Math.round(activeBase * (reteFuenteRate / 100) * 100) / 100;
-  const reteIcaAmount = Math.round(activeBase * (reteIcaRatePerMil / 1000) * 100) / 100;
-  const reteIvaAmount = Math.round(ivaDocument * (reteIvaRate / 100) * 100) / 100;
+  // Modales
+  const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
+  const [overrideTarget, setOverrideTarget] = useState<TaxDeterminationDto | null>(null);
+  const [overrideRate, setOverrideRate] = useState<string>('');
+  const [overrideAmount, setOverrideAmount] = useState<string>('');
+  const [overrideReason, setOverrideReason] = useState<string>('');
+  const [overrideSaving, setOverrideSaving] = useState<boolean>(false);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
 
-  const totalRetenciones = reteFuenteAmount + reteIcaAmount + reteIvaAmount;
-  const netoPagar = Math.max(0, totalDocument - totalRetenciones);
+  // Cargar datos iniciales
+  const loadInitialData = React.useCallback(async () => {
+    if (!companyId || !documentId) {
+      setLoading(false);
+      return;
+    }
 
-  const handleSave = async () => {
-    if (!companyId) return;
-    setSaving(true);
-    setSaveError(null);
-    setSaveSuccess(false);
+    setLoading(true);
+    setError(null);
 
     try {
-      const taxesPayload = [
-        {
-          tax_code: 'RENTA_RETE',
-          taxable_base: activeBase,
-          rate: reteFuenteRate,
-          amount: reteFuenteAmount,
-        },
-        {
-          tax_code: 'ICA_RETE',
-          taxable_base: activeBase,
-          rate: reteIcaRatePerMil,
-          amount: reteIcaAmount,
-        },
-        {
-          tax_code: 'IVA_RETE',
-          taxable_base: ivaDocument,
-          rate: reteIvaRate,
-          amount: reteIvaAmount,
-        },
-      ];
+      const [conceptsRes, detRes] = await Promise.all([
+        api.getTaxConcepts(),
+        api.getDocumentTaxDeterminations(companyId, documentId).catch(() => ({ determinations: [] })),
+      ]);
 
-      await api.updateDocumentTaxes(companyId, documentId, taxesPayload);
-      setSaveSuccess(true);
-      onTaxesSaved?.();
-      setTimeout(() => setSaveSuccess(false), 3000);
+      setConcepts(conceptsRes.concepts);
+      setDeterminations(detRes.determinations);
+
+      // Si ya existen determinaciones, seleccionar sus conceptos
+      for (const d of detRes.determinations) {
+        const cCode = d.tax_type_code || d.taxTypeCode;
+        const cId = d.tax_concept_id || d.taxConceptId;
+        if (cCode === 'RENTA_RETE' && cId) setSelectedRentaConceptId(cId);
+        if (cCode === 'ICA_RETE' && cId) setSelectedIcaConceptId(cId);
+      }
+
+      // Cargar perfil del tercero si hay identificador
+      if (thirdPartyIdentifier) {
+        try {
+          const pRes = await api.getThirdPartyTaxProfile(companyId, thirdPartyIdentifier);
+          setProfile(pRes.profile);
+        } catch {
+          setProfile(null);
+        }
+      }
     } catch (err: any) {
-      setSaveError(err?.message || 'Error al guardar los impuestos del documento.');
+      setError(err.message || 'Error cargando conceptos tributarios');
     } finally {
-      setSaving(false);
+      setLoading(false);
+    }
+  }, [companyId, documentId, thirdPartyIdentifier]);
+
+  useEffect(() => {
+    void loadInitialData();
+  }, [loadInitialData]);
+
+  // Conceptos filtrados por impuesto
+  const rentaConcepts = useMemo(
+    () => concepts.filter((c) => c.tax_type_code === 'RENTA_RETE'),
+    [concepts]
+  );
+
+  const icaConcepts = useMemo(
+    () => concepts.filter((c) => c.tax_type_code === 'ICA_RETE'),
+    [concepts]
+  );
+
+  // Ejecutar liquidación con el motor tributario
+  const handleCalculate = async () => {
+    if (!companyId || !documentId) return;
+
+    setCalculating(true);
+    setError(null);
+
+    try {
+      const res = await api.calculateDocumentTaxes(companyId, documentId, {
+        renta_concept_id: selectedRentaConceptId || null,
+        ica_concept_id: selectedIcaConceptId || null,
+      });
+
+      setDeterminations(res.determinations);
+      if (onTaxesSaved) onTaxesSaved();
+    } catch (err: any) {
+      setError(err.message || 'Error calculando retenciones');
+    } finally {
+      setCalculating(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="p-4 rounded-card border border-line bg-canvas flex items-center justify-center gap-2 text-ink-muted text-[12px]">
-        <Loader2 className="w-4 h-4 animate-spin text-brand" />
-        <span>Consultando liquidación tributaria…</span>
-      </div>
-    );
-  }
+  // Abrir modal de sobrescritura manual
+  const openOverrideModal = (det: TaxDeterminationDto) => {
+    setOverrideTarget(det);
+    setOverrideRate(String(det.rate * (det.tax_type_code === 'ICA_RETE' || det.taxTypeCode === 'ICA_RETE' ? 1000 : 100)));
+    setOverrideAmount(String(det.amount));
+    setOverrideReason(det.override_reason || det.overrideReason || '');
+    setOverrideError(null);
+  };
+
+  // Guardar ajuste manual
+  const handleSaveOverride = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyId || !documentId || !overrideTarget) return;
+
+    const taxTypeId = overrideTarget.tax_type_id || overrideTarget.taxTypeId;
+    if (!taxTypeId) return;
+
+    if (!overrideReason.trim() || overrideReason.trim().length < 5) {
+      setOverrideError('Debe ingresar una justificación contable de al menos 5 caracteres.');
+      return;
+    }
+
+    setOverrideSaving(true);
+    setOverrideError(null);
+
+    const isIca = overrideTarget.tax_type_code === 'ICA_RETE' || overrideTarget.taxTypeCode === 'ICA_RETE';
+    const rateNum = Number(overrideRate) / (isIca ? 1000 : 100);
+    const amountNum = Number(overrideAmount);
+
+    try {
+      const res = await api.overrideDocumentTax(companyId, documentId, {
+        tax_type_id: taxTypeId,
+        override_rate: isNaN(rateNum) ? 0 : rateNum,
+        override_amount: isNaN(amountNum) ? 0 : amountNum,
+        reason: overrideReason.trim(),
+      });
+
+      // Actualizar en el estado local
+      setDeterminations((prev) =>
+        prev.map((d) => {
+          const matchId = d.tax_type_id || d.taxTypeId;
+          return matchId === taxTypeId ? { ...d, ...res.determination } : d;
+        })
+      );
+
+      setOverrideTarget(null);
+      if (onTaxesSaved) onTaxesSaved();
+    } catch (err: any) {
+      setOverrideError(err.message || 'Error aplicando ajuste manual');
+    } finally {
+      setOverrideSaving(false);
+    }
+  };
+
+  // Totales
+  const totalRetenciones = determinations.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+  const netoPagar = Math.max(0, totalDocument - totalRetenciones);
 
   return (
-    <div className="rounded-card border border-line bg-canvas p-4 space-y-4">
-      {/* Title & Base Gravable Strip */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-line">
-        <div className="flex items-center gap-2">
-          <Calculator className="w-4 h-4 text-brand shrink-0" />
-          <h4 className="text-[13px] font-semibold text-ink">Liquidador de Retenciones</h4>
-        </div>
-        <div className="flex items-center gap-2 text-[12px]">
-          <span className="text-ink-muted">Base gravable:</span>
-          <div className="flex items-center gap-1.5">
-            <span className="font-semibold text-ink num">{formatCurrency(activeBase)}</span>
-            {customBaseInput !== '' && (
-              <button
-                type="button"
-                onClick={() => setCustomBaseInput('')}
-                className="text-[10px] text-brand hover:underline cursor-pointer"
-              >
-                (Restablecer)
-              </button>
-            )}
+    <div className="p-4 rounded-card border border-line bg-surface space-y-4 text-ink">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-line">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-lg bg-brand/10 text-brand">
+            <Calculator className="w-5 h-5" />
           </div>
-        </div>
-      </div>
-
-      {/* Retenciones Pickers */}
-      <div className="space-y-3.5">
-        {/* 1. ReteFuente */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-medium text-ink">
-              Retención en la fuente (Renta) {reteFuenteRate > 0 && `(${reteFuenteRate}%)`}
-            </span>
-            <span className="font-semibold num text-rose-600 dark:text-rose-400">
-              {reteFuenteAmount > 0 ? `-${formatCurrency(reteFuenteAmount)}` : '$0'}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {RETEFUENTE_PRESETS.map((p) => {
-              const selected = reteFuenteRate === p.rate;
-              return (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => setReteFuenteRate(p.rate)}
-                  title={p.desc}
-                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition cursor-pointer border ${
-                    selected
-                      ? 'bg-brand text-surface border-brand shadow-xs'
-                      : 'bg-surface hover:bg-canvas text-ink border-line'
-                  }`}
-                >
-                  {p.label} <span className="text-[10px] opacity-75 font-normal">({p.desc.split(' ')[0]})</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 2. ReteICA */}
-        <div className="space-y-1.5 pt-2 border-t border-line/60">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-medium text-ink">
-              ReteICA (Industria y Comercio) {reteIcaRatePerMil > 0 && `(${reteIcaRatePerMil}‰)`}
-            </span>
-            <span className="font-semibold num text-rose-600 dark:text-rose-400">
-              {reteIcaAmount > 0 ? `-${formatCurrency(reteIcaAmount)}` : '$0'}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {RETEICA_PRESETS.map((p) => {
-              const selected = reteIcaRatePerMil === p.ratePerMil;
-              return (
-                <button
-                  key={p.label}
-                  type="button"
-                  onClick={() => setReteIcaRatePerMil(p.ratePerMil)}
-                  title={p.desc}
-                  className={`px-2.5 py-1 rounded text-[11px] font-medium transition cursor-pointer border ${
-                    selected
-                      ? 'bg-brand text-surface border-brand shadow-xs'
-                      : 'bg-surface hover:bg-canvas text-ink border-line'
-                  }`}
-                >
-                  {p.label} <span className="text-[10px] opacity-75 font-normal">({p.desc})</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* 3. ReteIVA */}
-        {ivaDocument > 0 && (
-          <div className="space-y-1.5 pt-2 border-t border-line/60">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="font-medium text-ink">
-                ReteIVA (Sobre IVA de {formatCurrency(ivaDocument)}) {reteIvaRate > 0 && `(${reteIvaRate}%)`}
+          <div>
+            <h4 className="font-semibold text-xs text-ink flex items-center gap-1.5">
+              Liquidación Tributaria (Motor Parametrizable)
+              <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+                Normativa DIAN & Distrital
               </span>
-              <span className="font-semibold num text-rose-600 dark:text-rose-400">
-                {reteIvaAmount > 0 ? `-${formatCurrency(reteIvaAmount)}` : '$0'}
-              </span>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {RETEIVA_PRESETS.map((p) => {
-                const selected = reteIvaRate === p.rate;
-                return (
-                  <button
-                    key={p.label}
-                    type="button"
-                    onClick={() => setReteIvaRate(p.rate)}
-                    title={p.desc}
-                    className={`px-2.5 py-1 rounded text-[11px] font-medium transition cursor-pointer border ${
-                      selected
-                        ? 'bg-brand text-surface border-brand shadow-xs'
-                        : 'bg-surface hover:bg-canvas text-ink border-line'
-                    }`}
-                  >
-                    {p.label} <span className="text-[10px] opacity-75 font-normal">({p.desc.split(' ')[0]})</span>
-                  </button>
-                );
-              })}
-            </div>
+            </h4>
+            <p className="text-[11px] text-ink-muted">
+              Determine retenciones según el concepto de la operación y el perfil fiscal del tercero.
+            </p>
           </div>
+        </div>
+
+        {/* Perfil RUT Trigger */}
+        {thirdPartyIdentifier && (
+          <button
+            type="button"
+            onClick={() => setShowProfileModal(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line hover:border-brand/40 bg-canvas/60 text-xs font-medium text-ink hover:text-brand transition shadow-sm"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-brand" />
+            <span>{profile ? 'Ver / Editar Perfil RUT' : 'Configurar Perfil RUT'}</span>
+            <ExternalLink className="w-3 h-3 text-ink-muted" />
+          </button>
         )}
       </div>
 
-      {/* Summary Box & Save Button */}
-      <div className="pt-3 border-t border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface p-3 rounded-lg border border-line/80">
-        <div className="space-y-0.5 text-[11px]">
-          <div className="text-ink-muted">
-            Total Factura: <span className="num font-medium text-ink">{formatCurrency(totalDocument)}</span> ·
-            Retenciones: <span className="num font-medium text-rose-600 dark:text-rose-400">-{formatCurrency(totalRetenciones)}</span>
+      {error && (
+        <div className="p-3 rounded-lg border border-red-500/20 bg-red-500/10 text-red-600 text-xs flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* Resumen del Perfil Fiscal del Tercero */}
+      {thirdPartyIdentifier && (
+        <div className="p-3 rounded-lg border border-line bg-canvas/40 space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium text-ink flex items-center gap-1.5">
+              {profile?.person_type === 'NATURAL' ? (
+                <User className="w-3.5 h-3.5 text-ink-muted" />
+              ) : (
+                <Building2 className="w-3.5 h-3.5 text-ink-muted" />
+              )}
+              {thirdPartyName || 'Tercero asociado'}{' '}
+              <span className="font-mono text-ink-muted text-[11px]">({thirdPartyIdentifier})</span>
+            </span>
+            {profile ? (
+              <span className="text-[11px] font-medium text-emerald-600 flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Perfil RUT activo
+              </span>
+            ) : (
+              <span className="text-[11px] font-medium text-amber-600 flex items-center gap-1">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                Perfil pendiente de configuración
+              </span>
+            )}
           </div>
-          <div className="text-[13px] font-bold text-ink flex items-center gap-1.5">
-            <span>Neto a Pagar:</span>
-            <span className="num text-emerald-600 dark:text-emerald-400">{formatCurrency(netoPagar)}</span>
-          </div>
+
+          {profile ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+                {profile.person_type === 'JURIDICA' ? 'Persona Jurídica' : 'Persona Natural'}
+              </span>
+              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+                {profile.tax_regime === 'SIMPLE' ? 'Régimen Simple (RST)' : `Régimen ${profile.tax_regime}`}
+              </span>
+              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+                {profile.is_declarant_renta ? 'Declarante de Renta' : 'No Declarante'}
+              </span>
+              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+                ICA: {profile.ica_municipality_code === '11001' ? 'Bogotá D.C. (11001)' : profile.ica_municipality_code}
+              </span>
+              {profile.responsibilities.map((r) => (
+                <span
+                  key={r.id}
+                  className="px-2 py-0.5 rounded border border-brand/20 bg-brand/5 text-brand font-medium"
+                >
+                  {r.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-ink-muted">
+              Configure el perfil para que el motor aplique exenciones automáticas (ej. Régimen Simple, Autorretenedor).
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Selectores de Conceptos */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* ReteFuente Concept */}
+        <div>
+          <label className="block text-[11px] font-medium text-ink-muted mb-1">
+            Concepto de Retención en la Fuente
+          </label>
+          <select
+            value={selectedRentaConceptId}
+            onChange={(e) => setSelectedRentaConceptId(e.target.value)}
+            disabled={loading || calculating}
+            className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand"
+          >
+            <option value="">-- No aplicar o seleccionar concepto --</option>
+            {rentaConcepts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
 
-        <div className="flex items-center gap-2">
-          {saveError && (
-            <span className="text-[11px] text-danger inline-flex items-center gap-1" title={saveError}>
-              <AlertCircle className="w-3.5 h-3.5" />
-              Error
-            </span>
-          )}
-          {saveSuccess && (
-            <span className="text-[11px] text-emerald-600 font-medium inline-flex items-center gap-1">
-              <Check className="w-3.5 h-3.5" />
-              ¡Guardado!
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saving}
-            className="px-3.5 py-1.5 rounded-md bg-brand hover:bg-brand/90 text-surface text-[12px] font-semibold inline-flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 shadow-xs"
+        {/* ReteICA Concept */}
+        <div>
+          <label className="block text-[11px] font-medium text-ink-muted mb-1">
+            Concepto de Retención de ICA
+          </label>
+          <select
+            value={selectedIcaConceptId}
+            onChange={(e) => setSelectedIcaConceptId(e.target.value)}
+            disabled={loading || calculating}
+            className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand"
           >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-            {saving ? 'Guardando…' : 'Guardar retenciones'}
-          </button>
+            <option value="">-- No aplicar o seleccionar concepto --</option>
+            {icaConcepts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
+
+      {/* Acción de Liquidar */}
+      <div className="flex items-center justify-between pt-1">
+        <div className="text-[11px] text-ink-muted">
+          Base estimada: <span className="font-mono font-medium text-ink">{formatCurrency(defaultBase)}</span>
+        </div>
+        <button
+          type="button"
+          onClick={handleCalculate}
+          disabled={loading || calculating || (!selectedRentaConceptId && !selectedIcaConceptId)}
+          className="px-4 py-2 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand/90 transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+        >
+          {calculating ? (
+            <>
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Determinando con Motor...</span>
+            </>
+          ) : (
+            <>
+              <Calculator className="w-3.5 h-3.5" />
+              <span>Liquidar Retenciones</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Tabla / Tarjetas de Determinaciones */}
+      {determinations.length > 0 && (
+        <div className="space-y-3 pt-3 border-t border-line">
+          <span className="text-[11px] font-semibold text-ink uppercase tracking-wider block">
+            Impuestos y Retenciones Determinadas
+          </span>
+
+          <div className="space-y-2">
+            {determinations.map((det, idx) => {
+              const code = det.tax_type_code || det.taxTypeCode;
+              const name = det.tax_type_name || det.taxTypeName || code;
+              const conceptName = det.tax_concept_name || det.taxConceptName;
+              const isIca = code === 'ICA_RETE';
+              const rateDisplay = isIca
+                ? `${(det.rate * 1000).toFixed(2)} ‰`
+                : `${(det.rate * 100).toFixed(2)} %`;
+
+              const statusConfig = {
+                CALCULATED: { bg: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20', label: 'Liquidado' },
+                EXEMPT: { bg: 'bg-blue-500/10 text-blue-600 border-blue-500/20', label: 'Exento (0%)' },
+                NOT_APPLICABLE: { bg: 'bg-gray-500/10 text-gray-500 border-gray-500/20', label: 'No Aplica (< Base Mínima)' },
+                MISSING_PROFILE: { bg: 'bg-amber-500/10 text-amber-600 border-amber-500/20', label: 'Perfil Incompleto' },
+                NO_MATCHING_RULE: { bg: 'bg-rose-500/10 text-rose-600 border-rose-500/20', label: 'Sin Regla' },
+                REQUIRES_REVIEW: { bg: 'bg-amber-500/10 text-amber-600 border-amber-500/20', label: 'Requiere Revisión' },
+                MANUALLY_OVERRIDDEN: { bg: 'bg-purple-500/10 text-purple-600 border-purple-500/20', label: 'Ajustado Manualmente' },
+              }[det.status] || { bg: 'bg-gray-500/10 text-gray-500 border-gray-500/20', label: det.status };
+
+              return (
+                <div
+                  key={idx}
+                  className="p-3.5 rounded-lg border border-line bg-canvas/60 space-y-2 hover:border-line/80 transition"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-xs text-ink">{name}</span>
+                      {conceptName && (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-surface border border-line text-ink-muted">
+                          {conceptName}
+                        </span>
+                      )}
+                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${statusConfig.bg}`}>
+                        {statusConfig.label}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <span className="text-[11px] text-ink-muted block">
+                          Base: {formatCurrency(det.taxable_base || det.taxableBase || defaultBase)} · Tarifa: {rateDisplay}
+                        </span>
+                        <span className="num font-bold text-xs text-ink">
+                          {formatCurrency(det.amount)}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => openOverrideModal(det)}
+                        title="Modificar manualmente cálculo"
+                        className="p-1.5 rounded-lg border border-line hover:border-purple-500/40 hover:bg-purple-500/5 text-ink-muted hover:text-purple-600 transition"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Fundamento Jurídico / Explicación */}
+                  {det.explanation && (
+                    <div className="text-[11px] text-ink-muted bg-surface/80 p-2 rounded border border-line/60 flex items-start gap-1.5">
+                      <HelpCircle className="w-3.5 h-3.5 text-brand shrink-0 mt-0.5" />
+                      <span className="flex-1">{det.explanation}</span>
+                    </div>
+                  )}
+
+                  {det.override_reason && (
+                    <div className="text-[10px] text-purple-600 bg-purple-500/5 p-1.5 rounded border border-purple-500/20 font-medium">
+                      Justificación contable: {det.override_reason}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Resumen Totalizador */}
+          <div className="p-3.5 rounded-lg border border-line bg-surface flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <div>
+              <span className="text-[11px] text-ink-muted block">Total Retenciones Practicadas</span>
+              <span className="num font-bold text-sm text-red-600">
+                - {formatCurrency(totalRetenciones)}
+              </span>
+            </div>
+            <div className="sm:text-right">
+              <span className="text-[11px] text-ink-muted block">Neto Estimado a Pagar / Girar</span>
+              <span className="num font-bold text-base text-brand">
+                {formatCurrency(netoPagar)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Perfil RUT Tercero */}
+      {showProfileModal && thirdPartyIdentifier && (
+        <ThirdPartyTaxProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+          companyId={companyId || ''}
+          thirdPartyIdentifier={thirdPartyIdentifier}
+          thirdPartyName={thirdPartyName}
+          onProfileSaved={() => {
+            void loadInitialData();
+          }}
+        />
+      )}
+
+      {/* Modal Ajuste Manual / Override */}
+      {overrideTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-surface border border-line rounded-card shadow-2xl max-w-md w-full p-6 space-y-4 text-ink">
+            <div className="flex items-center justify-between pb-2 border-b border-line">
+              <h3 className="font-semibold text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-purple-600" />
+                Modificar Cálculo Manualmente
+              </h3>
+              <button
+                type="button"
+                onClick={() => setOverrideTarget(null)}
+                className="text-ink-muted hover:text-ink"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-[11px] text-ink-muted">
+              Por trazabilidad contable, cualquier modificación manual sobre la tarifa o importe calculado requiere una justificación legal o soporte tributario auditado.
+            </p>
+
+            {overrideError && (
+              <div className="p-2.5 rounded bg-red-500/10 border border-red-500/20 text-red-600 text-xs">
+                {overrideError}
+              </div>
+            )}
+
+            <form onSubmit={handleSaveOverride} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                    Tarifa ({overrideTarget.tax_type_code === 'ICA_RETE' || overrideTarget.taxTypeCode === 'ICA_RETE' ? '‰' : '%'})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={overrideRate}
+                    onChange={(e) => {
+                      const newRate = e.target.value;
+                      setOverrideRate(newRate);
+                      const isIca = overrideTarget.tax_type_code === 'ICA_RETE' || overrideTarget.taxTypeCode === 'ICA_RETE';
+                      const base = overrideTarget.taxable_base || overrideTarget.taxableBase || defaultBase;
+                      const calculated = Math.round(base * (Number(newRate) / (isIca ? 1000 : 100)));
+                      if (!isNaN(calculated)) setOverrideAmount(String(calculated));
+                    }}
+                    className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs font-mono"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                    Importe ($ COP)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={overrideAmount}
+                    onChange={(e) => setOverrideAmount(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs font-mono"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                  Justificación Contable (Obligatorio)
+                </label>
+                <textarea
+                  rows={3}
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Ej: Proveedor presentó resolución de no sujeción radicada el 15 de marzo..."
+                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs placeholder:text-ink-muted/50 focus:outline-none focus:border-brand"
+                  required
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOverrideTarget(null)}
+                  disabled={overrideSaving}
+                  className="px-3 py-1.5 rounded-lg border border-line text-xs hover:bg-canvas"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={overrideSaving}
+                  className="px-4 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 transition flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {overrideSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                  <span>Guardar Ajuste Auditado</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

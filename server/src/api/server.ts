@@ -36,6 +36,7 @@ import { allowedOrigins, CSRF_HEADER } from '../auth/constants.js';
 import { audit } from '../auth/service.js';
 import { registerAuthRoutes } from './authRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
+import { registerTaxRoutes } from './taxRoutes.js';
 import { HttpError } from './errors.js';
 import {
   QueryError,
@@ -184,6 +185,7 @@ export async function buildServer(
 
   await registerAuthRoutes(app, db, guards);
   registerAdminRoutes(app, db, guards);
+  registerTaxRoutes(app, db, guards);
 
   app.get('/api/health', async () => ({ ok: true, now: new Date().toISOString() }));
 

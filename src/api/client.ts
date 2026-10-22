@@ -367,6 +367,87 @@ function jsonInit(method: string, payload?: unknown): RequestInit {
   };
 }
 
+
+export interface TaxConceptDto {
+  id: string;
+  code: string;
+  name: string;
+  tax_type_id: string;
+  tax_type_code: string;
+  tax_type_name: string;
+  description: string | null;
+  active: boolean;
+}
+
+export interface TaxResponsibilityDto {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+}
+
+export interface ThirdPartyTaxProfileDto {
+  id: string;
+  company_id: string;
+  third_party_id: string;
+  person_type: 'NATURAL' | 'JURIDICA';
+  tax_regime: 'ORDINARIO' | 'SIMPLE' | 'ESPECIAL' | 'NO_RESPONSABLE';
+  economic_activity_code: string | null;
+  ica_municipality_code: string;
+  is_declarant_renta: boolean;
+  valid_from: string;
+  valid_to: string;
+  responsibilities: Array<{
+    id: string;
+    code: string;
+    name: string;
+    description: string | null;
+  }>;
+}
+
+export interface UpsertTaxProfileInput {
+  person_type: 'NATURAL' | 'JURIDICA';
+  tax_regime: 'ORDINARIO' | 'SIMPLE' | 'ESPECIAL' | 'NO_RESPONSABLE';
+  economic_activity_code?: string | null;
+  ica_municipality_code: string;
+  is_declarant_renta: boolean;
+  responsibility_ids: string[];
+  valid_from?: string;
+  valid_to?: string;
+}
+
+export interface TaxDeterminationDto {
+  id?: string;
+  tax_type_id?: string;
+  taxTypeId?: string;
+  tax_type_code?: string;
+  taxTypeCode?: string;
+  tax_type_name?: string;
+  taxTypeName?: string;
+  tax_concept_id?: string | null;
+  taxConceptId?: string | null;
+  tax_concept_code?: string | null;
+  taxConceptCode?: string | null;
+  tax_concept_name?: string | null;
+  taxConceptName?: string | null;
+  tax_rule_id?: string | null;
+  taxRuleId?: string | null;
+  taxable_base?: number;
+  taxableBase?: number;
+  rate: number;
+  amount: number;
+  status: 'CALCULATED' | 'EXEMPT' | 'NOT_APPLICABLE' | 'MISSING_PROFILE' | 'NO_MATCHING_RULE' | 'REQUIRES_REVIEW' | 'MANUALLY_OVERRIDDEN';
+  source: 'ENGINE' | 'MANUAL';
+  explanation: string;
+  legalReference?: string | null;
+  override_reason?: string | null;
+  overrideReason?: string | null;
+  override_rate?: number | null;
+  override_amount?: number | null;
+  profileSnapshot?: Record<string, unknown>;
+  ruleSnapshot?: Record<string, unknown>;
+}
+
 export const api = {
   baseUrl: BASE,
 
@@ -610,6 +691,58 @@ export const api = {
       invoice: ParsedUblInvoice;
       raw_xml: string;
     }>(`/api/companies/${companyId}/documents/${documentId}/xml`),
+
+
+  getTaxConcepts: () =>
+    request<{ concepts: TaxConceptDto[] }>('/api/tax-concepts'),
+
+  getTaxResponsibilities: () =>
+    request<{ responsibilities: TaxResponsibilityDto[] }>('/api/tax-responsibilities'),
+
+  getThirdPartyTaxProfile: (companyId: string, thirdPartyId: string) =>
+    request<{ profile: ThirdPartyTaxProfileDto | null }>(
+      `/api/companies/${companyId}/third-parties/${thirdPartyId}/tax-profile`
+    ),
+
+  saveThirdPartyTaxProfile: (companyId: string, thirdPartyId: string, data: UpsertTaxProfileInput) =>
+    request<{ profile: ThirdPartyTaxProfileDto }>(
+      `/api/companies/${companyId}/third-parties/${thirdPartyId}/tax-profile`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      }
+    ),
+
+  getDocumentTaxDeterminations: (companyId: string, documentId: string) =>
+    request<{ determinations: TaxDeterminationDto[] }>(
+      `/api/companies/${companyId}/documents/${documentId}/tax-determinations`
+    ),
+
+  calculateDocumentTaxes: (
+    companyId: string,
+    documentId: string,
+    input: { renta_concept_id?: string | null; ica_concept_id?: string | null }
+  ) =>
+    request<{ determinations: TaxDeterminationDto[] }>(
+      `/api/companies/${companyId}/documents/${documentId}/tax-determinations/calculate`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }
+    ),
+
+  overrideDocumentTax: (
+    companyId: string,
+    documentId: string,
+    input: { tax_type_id: string; override_rate: number; override_amount: number; reason: string }
+  ) =>
+    request<{ determination: TaxDeterminationDto }>(
+      `/api/companies/${companyId}/documents/${documentId}/tax-determinations/override`,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }
+    ),
 
   getDocumentTaxes: (companyId: string, documentId: string) =>
     request<{

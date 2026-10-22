@@ -577,6 +577,104 @@ export interface SchemaMigrationsTable {
   applied_at: CreatedAt;
 }
 
+
+export type PersonType = 'NATURAL' | 'JURIDICA';
+export type TaxRegime = 'ORDINARIO' | 'SIMPLE' | 'ESPECIAL' | 'NO_RESPONSABLE';
+export type RateBasis = 'PERCENT' | 'PER_MILLE';
+export type DeterminationStatus =
+  | 'CALCULATED'
+  | 'EXEMPT'
+  | 'NOT_APPLICABLE'
+  | 'MISSING_PROFILE'
+  | 'NO_MATCHING_RULE'
+  | 'REQUIRES_REVIEW'
+  | 'MANUALLY_OVERRIDDEN';
+
+export interface TaxResponsibilitiesTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  description: string | null;
+  created_at: CreatedAt;
+}
+
+export interface TaxConceptsTable {
+  id: Generated<string>;
+  code: string;
+  name: string;
+  tax_type_id: string;
+  description: string | null;
+  active: Generated<boolean>;
+  created_at: CreatedAt;
+}
+
+export interface ThirdPartyTaxProfilesTable {
+  id: Generated<string>;
+  company_id: string;
+  third_party_id: string;
+  person_type: Generated<PersonType>;
+  tax_regime: Generated<TaxRegime>;
+  economic_activity_code: string | null;
+  ica_municipality_code: Generated<string>;
+  is_declarant_renta: Generated<boolean>;
+  valid_from: ColumnType<string, string | undefined, string>;
+  valid_to: ColumnType<string, string | undefined, string>;
+  metadata: Generated<Json>;
+  created_at: CreatedAt;
+  updated_at: Timestamptz;
+}
+
+export interface ThirdPartyTaxResponsibilitiesTable {
+  profile_id: string;
+  responsibility_id: string;
+  created_at: CreatedAt;
+}
+
+export interface TaxRulesTable {
+  id: Generated<string>;
+  company_id: string | null;
+  tax_type_id: string;
+  tax_concept_id: string;
+  municipality_code: string | null;
+  person_type: PersonType | null;
+  is_declarant_renta: boolean | null;
+  tax_regime: TaxRegime | null;
+  required_responsibility_id: string | null;
+  excluded_responsibility_id: string | null;
+  min_base_cop: Generated<number>;
+  rate: number;
+  rate_basis: Generated<RateBasis>;
+  effective_from: ColumnType<string, string | undefined, string>;
+  effective_to: ColumnType<string, string | undefined, string>;
+  priority: Generated<number>;
+  legal_reference: string | null;
+  explanation: string | null;
+  enabled: Generated<boolean>;
+  created_at: CreatedAt;
+}
+
+export interface DocumentTaxDeterminationsTable {
+  id: Generated<string>;
+  company_id: string;
+  document_id: string;
+  tax_type_id: string;
+  tax_concept_id: string | null;
+  tax_rule_id: string | null;
+  taxable_base: Generated<number>;
+  rate: Generated<number>;
+  amount: Generated<number>;
+  status: DeterminationStatus;
+  source: Generated<'ENGINE' | 'MANUAL'>;
+  profile_snapshot: Generated<Json>;
+  rule_snapshot: Generated<Json>;
+  explanation: string | null;
+  override_reason: string | null;
+  override_rate: number | null;
+  override_amount: number | null;
+  calculated_by: string | null;
+  calculated_at: Timestamptz;
+}
+
 export interface Database {
   companies: CompaniesTable;
   imports: ImportsTable;
@@ -619,6 +717,13 @@ export interface Database {
   user_sessions: UserSessionsTable;
   login_attempts: LoginAttemptsTable;
   schema_migrations: SchemaMigrationsTable;
+  tax_responsibilities: TaxResponsibilitiesTable;
+  tax_concepts: TaxConceptsTable;
+  third_party_tax_profiles: ThirdPartyTaxProfilesTable;
+  third_party_tax_responsibilities: ThirdPartyTaxResponsibilitiesTable;
+  tax_rules: TaxRulesTable;
+  document_tax_determinations: DocumentTaxDeterminationsTable;
+
 }
 
 export type Company = Selectable<CompaniesTable>;
@@ -695,3 +800,24 @@ export type NewRole = Insertable<RolesTable>;
 export type Permission = Selectable<PermissionsTable>;
 export type UserSession = Selectable<UserSessionsTable>;
 export type LoginAttempt = Insertable<LoginAttemptsTable>;
+
+export type TaxResponsibility = Selectable<TaxResponsibilitiesTable>;
+export type NewTaxResponsibility = Insertable<TaxResponsibilitiesTable>;
+
+export type TaxConcept = Selectable<TaxConceptsTable>;
+export type NewTaxConcept = Insertable<TaxConceptsTable>;
+
+export type ThirdPartyTaxProfile = Selectable<ThirdPartyTaxProfilesTable>;
+export type NewThirdPartyTaxProfile = Insertable<ThirdPartyTaxProfilesTable>;
+export type ThirdPartyTaxProfileUpdate = Updateable<ThirdPartyTaxProfilesTable>;
+
+export type ThirdPartyTaxResponsibility = Selectable<ThirdPartyTaxResponsibilitiesTable>;
+export type NewThirdPartyTaxResponsibility = Insertable<ThirdPartyTaxResponsibilitiesTable>;
+
+export type TaxRule = Selectable<TaxRulesTable>;
+export type NewTaxRule = Insertable<TaxRulesTable>;
+export type TaxRuleUpdate = Updateable<TaxRulesTable>;
+
+export type DocumentTaxDetermination = Selectable<DocumentTaxDeterminationsTable>;
+export type NewDocumentTaxDetermination = Insertable<DocumentTaxDeterminationsTable>;
+export type DocumentTaxDeterminationUpdate = Updateable<DocumentTaxDeterminationsTable>;
