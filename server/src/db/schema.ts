@@ -675,6 +675,42 @@ export interface DocumentTaxDeterminationsTable {
   calculated_at: Timestamptz;
 }
 
+export interface CompanyTaxConfigurationsTable {
+  id: Generated<string>;
+  company_id: string;
+  tax_type_id: string;
+  operation_type: Generated<'ISSUED' | 'RECEIVED' | 'ALL'>;
+  document_category: Generated<'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL'>;
+  is_enabled: Generated<boolean>;
+  default_rate: number | null;
+  rate_basis: Generated<RateBasis>;
+  default_concept_id: string | null;
+  min_base_cop: Generated<number>;
+  applies_to_declarant: boolean | null;
+  metadata: Generated<Json>;
+  created_at: CreatedAt;
+  updated_at: Timestamptz;
+}
+
+export interface ThirdPartyTaxRulesTable {
+  id: Generated<string>;
+  company_id: string;
+  third_party_id: string;
+  tax_type_id: string;
+  operation_type: Generated<'ISSUED' | 'RECEIVED' | 'ALL'>;
+  document_category: Generated<'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL'>;
+  is_exempt: Generated<boolean>;
+  custom_rate: number | null;
+  rate_basis: Generated<RateBasis>;
+  custom_concept_id: string | null;
+  municipality_code: string | null;
+  notes: string | null;
+  valid_from: ColumnType<string, string | undefined, string>;
+  valid_to: ColumnType<string, string | undefined, string>;
+  created_at: CreatedAt;
+  updated_at: Timestamptz;
+}
+
 export interface Database {
   companies: CompaniesTable;
   imports: ImportsTable;
@@ -723,7 +759,8 @@ export interface Database {
   third_party_tax_responsibilities: ThirdPartyTaxResponsibilitiesTable;
   tax_rules: TaxRulesTable;
   document_tax_determinations: DocumentTaxDeterminationsTable;
-
+  company_tax_configurations: CompanyTaxConfigurationsTable;
+  third_party_tax_rules: ThirdPartyTaxRulesTable;
 }
 
 export type Company = Selectable<CompaniesTable>;
@@ -821,3 +858,11 @@ export type TaxRuleUpdate = Updateable<TaxRulesTable>;
 export type DocumentTaxDetermination = Selectable<DocumentTaxDeterminationsTable>;
 export type NewDocumentTaxDetermination = Insertable<DocumentTaxDeterminationsTable>;
 export type DocumentTaxDeterminationUpdate = Updateable<DocumentTaxDeterminationsTable>;
+
+export type CompanyTaxConfiguration = Selectable<CompanyTaxConfigurationsTable>;
+export type NewCompanyTaxConfiguration = Insertable<CompanyTaxConfigurationsTable>;
+export type CompanyTaxConfigurationUpdate = Updateable<CompanyTaxConfigurationsTable>;
+
+export type ThirdPartyTaxRule = Selectable<ThirdPartyTaxRulesTable>;
+export type NewThirdPartyTaxRule = Insertable<ThirdPartyTaxRulesTable>;
+export type ThirdPartyTaxRuleUpdate = Updateable<ThirdPartyTaxRulesTable>;

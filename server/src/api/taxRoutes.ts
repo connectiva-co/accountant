@@ -57,6 +57,33 @@ const profileUpsertSchema = z.object({
 const calculateBodySchema = z.object({
   renta_concept_id: z.string().uuid().optional().nullable(),
   ica_concept_id: z.string().uuid().optional().nullable(),
+  concept_overrides: z.record(z.string()).optional(),
+});
+
+const companyTaxConfigSchema = z.object({
+  tax_type_id: z.string().uuid(),
+  operation_type: z.enum(['ISSUED', 'RECEIVED', 'ALL']).default('ALL'),
+  document_category: z.enum(['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'SUPPORT', 'ALL']).default('ALL'),
+  is_enabled: z.boolean().default(true),
+  default_rate: z.number().min(0).max(1).optional().nullable(),
+  rate_basis: z.enum(['PERCENT', 'PER_MILLE']).default('PERCENT'),
+  default_concept_id: z.string().uuid().optional().nullable(),
+  min_base_cop: z.number().min(0).default(0),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+const thirdPartyTaxRuleSchema = z.object({
+  tax_type_id: z.string().uuid(),
+  operation_type: z.enum(['ISSUED', 'RECEIVED', 'ALL']).default('ALL'),
+  document_category: z.enum(['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE', 'SUPPORT', 'ALL']).default('ALL'),
+  is_exempt: z.boolean().default(false),
+  custom_rate: z.number().min(0).max(1).optional().nullable(),
+  rate_basis: z.enum(['PERCENT', 'PER_MILLE']).default('PERCENT'),
+  custom_concept_id: z.string().uuid().optional().nullable(),
+  municipality_code: z.string().max(10).optional().nullable(),
+  notes: z.string().max(500).optional().nullable(),
+  valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  valid_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 const overrideBodySchema = z.object({
@@ -433,6 +460,7 @@ export function registerTaxRoutes(
         documentId,
         rentaConceptId: body.renta_concept_id,
         icaConceptId: body.ica_concept_id,
+        conceptOverrides: body.concept_overrides,
         userId: user?.id,
       });
 
@@ -464,6 +492,248 @@ export function registerTaxRoutes(
       });
 
       return { determination: result };
+    }
+  );
+
+  // 8. Consultar configuración tributaria de la empresa
+  app.get(
+    '/api/companies/:companyId/tax-configurations',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.read')] },
+    async (req) => {
+      const { companyId } = parse(z.object({ companyId: z.string().uuid() }), req.params);
+
+      const configs = await db
+        .selectFrom('company_tax_configurations as c')
+        .innerJoin('tax_types as tt', 'tt.id', 'c.tax_type_id')
+        .leftJoin('tax_concepts as tc', 'tc.id', 'c.default_concept_id')
+        .select([
+          'c.id as id',
+          'c.company_id as company_id',
+          'c.tax_type_id as tax_type_id',
+          'tt.code as tax_type_code',
+          'tt.name as tax_type_name',
+          'c.operation_type as operation_type',
+          'c.document_category as document_category',
+          'c.is_enabled as is_enabled',
+          'c.default_rate as default_rate',
+          'c.rate_basis as rate_basis',
+          'c.default_concept_id as default_concept_id',
+          'tc.name as default_concept_name',
+          'c.min_base_cop as min_base_cop',
+          'c.metadata as metadata',
+          'c.created_at as created_at',
+          'c.updated_at as updated_at',
+        ])
+        .where('c.company_id', '=', companyId)
+        .orderBy('tt.name', 'asc')
+        .execute();
+
+      return {
+        configurations: configs.map((c) => ({
+          ...c,
+          default_rate: c.default_rate !== null ? Number(c.default_rate) : null,
+          min_base_cop: Number(c.min_base_cop),
+          metadata: typeof c.metadata === 'string' ? JSON.parse(c.metadata) : c.metadata,
+        })),
+      };
+    }
+  );
+
+  // 9. Guardar/actualizar configuración tributaria de la empresa
+  app.post(
+    '/api/companies/:companyId/tax-configurations',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
+    async (req) => {
+      const { companyId } = parse(z.object({ companyId: z.string().uuid() }), req.params);
+      const body = parse(companyTaxConfigSchema, req.body);
+
+      const saved = await db
+        .insertInto('company_tax_configurations')
+        .values({
+          company_id: companyId,
+          tax_type_id: body.tax_type_id,
+          operation_type: body.operation_type,
+          document_category: body.document_category,
+          is_enabled: body.is_enabled,
+          default_rate: body.default_rate ?? null,
+          rate_basis: body.rate_basis,
+          default_concept_id: body.default_concept_id ?? null,
+          min_base_cop: body.min_base_cop,
+          metadata: JSON.stringify(body.metadata ?? {}),
+          updated_at: new Date(),
+        })
+        .onConflict((oc) =>
+          oc.columns(['company_id', 'tax_type_id', 'operation_type', 'document_category']).doUpdateSet({
+            is_enabled: body.is_enabled,
+            default_rate: body.default_rate ?? null,
+            rate_basis: body.rate_basis,
+            default_concept_id: body.default_concept_id ?? null,
+            min_base_cop: body.min_base_cop,
+            metadata: JSON.stringify(body.metadata ?? {}),
+            updated_at: new Date(),
+          })
+        )
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return {
+        configuration: {
+          ...saved,
+          default_rate: saved.default_rate !== null ? Number(saved.default_rate) : null,
+          min_base_cop: Number(saved.min_base_cop),
+          metadata: typeof saved.metadata === 'string' ? JSON.parse(saved.metadata) : saved.metadata,
+        },
+      };
+    }
+  );
+
+  // 10. Eliminar configuración tributaria de la empresa
+  app.delete(
+    '/api/companies/:companyId/tax-configurations/:id',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
+    async (req) => {
+      const { companyId, id } = parse(z.object({ companyId: z.string().uuid(), id: z.string().uuid() }), req.params);
+      await db
+        .deleteFrom('company_tax_configurations')
+        .where('id', '=', id)
+        .where('company_id', '=', companyId)
+        .execute();
+      return { success: true };
+    }
+  );
+
+  // 11. Consultar reglas específicas de un tercero
+  app.get(
+    '/api/companies/:companyId/third-parties/:thirdPartyId/tax-rules',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.read')] },
+    async (req) => {
+      const { companyId, thirdPartyId } = parse(thirdPartyProfileParams, req.params);
+
+      // Resolver ID si viene por tax_id
+      let actualPartyId = thirdPartyId;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(thirdPartyId)) {
+        const tp = await db
+          .selectFrom('third_parties')
+          .select('id')
+          .where('company_id', '=', companyId)
+          .where('tax_id', '=', thirdPartyId)
+          .executeTakeFirst();
+        if (tp) actualPartyId = tp.id;
+      }
+
+      const rules = await db
+        .selectFrom('third_party_tax_rules as r')
+        .innerJoin('tax_types as tt', 'tt.id', 'r.tax_type_id')
+        .leftJoin('tax_concepts as tc', 'tc.id', 'r.custom_concept_id')
+        .select([
+          'r.id as id',
+          'r.company_id as company_id',
+          'r.third_party_id as third_party_id',
+          'r.tax_type_id as tax_type_id',
+          'tt.code as tax_type_code',
+          'tt.name as tax_type_name',
+          'r.operation_type as operation_type',
+          'r.document_category as document_category',
+          'r.is_exempt as is_exempt',
+          'r.custom_rate as custom_rate',
+          'r.rate_basis as rate_basis',
+          'r.custom_concept_id as custom_concept_id',
+          'tc.name as custom_concept_name',
+          'r.municipality_code as municipality_code',
+          'r.notes as notes',
+          'r.valid_from as valid_from',
+          'r.valid_to as valid_to',
+          'r.created_at as created_at',
+          'r.updated_at as updated_at',
+        ])
+        .where('r.company_id', '=', companyId)
+        .where('r.third_party_id', '=', actualPartyId)
+        .orderBy('tt.name', 'asc')
+        .execute();
+
+      return {
+        rules: rules.map((r) => ({
+          ...r,
+          custom_rate: r.custom_rate !== null ? Number(r.custom_rate) : null,
+        })),
+      };
+    }
+  );
+
+  // 12. Guardar/actualizar regla específica de un tercero
+  app.post(
+    '/api/companies/:companyId/third-parties/:thirdPartyId/tax-rules',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
+    async (req) => {
+      const { companyId, thirdPartyId } = parse(thirdPartyProfileParams, req.params);
+      const body = parse(thirdPartyTaxRuleSchema, req.body);
+
+      let actualPartyId = thirdPartyId;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(thirdPartyId)) {
+        const tp = await db
+          .selectFrom('third_parties')
+          .select('id')
+          .where('company_id', '=', companyId)
+          .where('tax_id', '=', thirdPartyId)
+          .executeTakeFirst();
+        if (tp) actualPartyId = tp.id;
+      }
+
+      const saved = await db
+        .insertInto('third_party_tax_rules')
+        .values({
+          company_id: companyId,
+          third_party_id: actualPartyId,
+          tax_type_id: body.tax_type_id,
+          operation_type: body.operation_type,
+          document_category: body.document_category,
+          is_exempt: body.is_exempt,
+          custom_rate: body.custom_rate ?? null,
+          rate_basis: body.rate_basis,
+          custom_concept_id: body.custom_concept_id ?? null,
+          municipality_code: body.municipality_code ?? null,
+          notes: body.notes ?? null,
+          valid_from: body.valid_from ?? new Date().toISOString().slice(0, 10),
+          valid_to: body.valid_to ?? '9999-12-31',
+          updated_at: new Date(),
+        })
+        .onConflict((oc) =>
+          oc.columns(['company_id', 'third_party_id', 'tax_type_id', 'operation_type', 'document_category']).doUpdateSet({
+            is_exempt: body.is_exempt,
+            custom_rate: body.custom_rate ?? null,
+            rate_basis: body.rate_basis,
+            custom_concept_id: body.custom_concept_id ?? null,
+            municipality_code: body.municipality_code ?? null,
+            notes: body.notes ?? null,
+            valid_from: body.valid_from ?? new Date().toISOString().slice(0, 10),
+            valid_to: body.valid_to ?? '9999-12-31',
+            updated_at: new Date(),
+          })
+        )
+        .returningAll()
+        .executeTakeFirstOrThrow();
+
+      return {
+        rule: {
+          ...saved,
+          custom_rate: saved.custom_rate !== null ? Number(saved.custom_rate) : null,
+        },
+      };
+    }
+  );
+
+  // 13. Eliminar regla específica de un tercero
+  app.delete(
+    '/api/companies/:companyId/third-parties/:thirdPartyId/tax-rules/:id',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
+    async (req) => {
+      const { companyId, id } = parse(z.object({ companyId: z.string().uuid(), id: z.string().uuid() }), req.params);
+      await db
+        .deleteFrom('third_party_tax_rules')
+        .where('id', '=', id)
+        .where('company_id', '=', companyId)
+        .execute();
+      return { success: true };
     }
   );
 }

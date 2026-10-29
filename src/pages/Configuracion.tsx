@@ -14,7 +14,9 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Panel } from '../components/ui/Panel';
 import { SectionHeader } from '../components/ui/SectionHeader';
 import { IntegracionesPanel } from '../components/settings/IntegracionesPanel';
+import { TaxSettingsPanel } from '../components/settings/TaxSettingsPanel';
 import { APP_NAME } from '../config/company';
+import { Percent } from 'lucide-react';
 
 const control =
   'h-8 w-full text-xs border border-line rounded-md bg-surface px-2.5 text-ink focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500/30';
@@ -28,7 +30,7 @@ const InfoRow: React.FC<{ label: string; value: string }> = ({ label, value }) =
 
 const humanize = (key: string): string => key.replace(/_/g, ' ');
 
-type ConfigTab = 'empresa' | 'integraciones' | 'sistema' | 'datos';
+type ConfigTab = 'empresa' | 'impuestos' | 'integraciones' | 'sistema' | 'datos';
 
 export const Configuracion: React.FC = () => {
   const { company, setCompany, anchor, fileName, resetDemo, openUpload, dataSource, apiOnline, apiCompany } =
@@ -95,6 +97,7 @@ export const Configuracion: React.FC = () => {
 
   const tabs: Array<{ id: ConfigTab; label: string; icon: React.FC<{ className?: string }> }> = [
     { id: 'empresa', label: 'Empresa y formato', icon: Building2 },
+    { id: 'impuestos', label: 'Impuestos y retenciones', icon: Percent },
     { id: 'integraciones', label: 'Integraciones', icon: Plug },
     { id: 'sistema', label: 'Parámetros del sistema', icon: Sliders },
     { id: 'datos', label: 'Fuente de datos', icon: Database },
@@ -167,6 +170,13 @@ export const Configuracion: React.FC = () => {
               <InfoRow label="Idioma" value="Español (Colombia)" />
             </div>
           </Panel>
+        </div>
+      )}
+
+      {/* Tab: Impuestos y retenciones */}
+      {activeTab === 'impuestos' && (
+        <div className="max-w-5xl">
+          <TaxSettingsPanel companyId={apiCompany?.id ?? null} />
         </div>
       )}
 

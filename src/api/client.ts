@@ -448,6 +448,47 @@ export interface TaxDeterminationDto {
   ruleSnapshot?: Record<string, unknown>;
 }
 
+export interface CompanyTaxConfigurationDto {
+  id: string;
+  company_id: string;
+  tax_type_id: string;
+  tax_type_code: string;
+  tax_type_name: string;
+  operation_type: 'ISSUED' | 'RECEIVED' | 'ALL';
+  document_category: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+  is_enabled: boolean;
+  default_rate: number | null;
+  rate_basis: 'PERCENT' | 'PER_MILLE';
+  default_concept_id: string | null;
+  default_concept_name?: string | null;
+  min_base_cop: number;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThirdPartyTaxRuleDto {
+  id: string;
+  company_id: string;
+  third_party_id: string;
+  tax_type_id: string;
+  tax_type_code: string;
+  tax_type_name: string;
+  operation_type: 'ISSUED' | 'RECEIVED' | 'ALL';
+  document_category: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+  is_exempt: boolean;
+  custom_rate: number | null;
+  rate_basis: 'PERCENT' | 'PER_MILLE';
+  custom_concept_id: string | null;
+  custom_concept_name?: string | null;
+  municipality_code: string | null;
+  notes: string | null;
+  valid_from: string;
+  valid_to: string;
+  created_at: string;
+  updated_at: string;
+}
+
 
 function resolveEffectiveCompanyId(companyId?: string | null): string {
   if (companyId && companyId !== 'undefined' && companyId !== 'null') return companyId;
@@ -742,7 +783,11 @@ export const api = {
   calculateDocumentTaxes: (
     companyId: string | null | undefined,
     documentId: string,
-    input: { renta_concept_id?: string | null; ica_concept_id?: string | null }
+    input: {
+      renta_concept_id?: string | null;
+      ica_concept_id?: string | null;
+      concept_overrides?: Record<string, string>;
+    }
   ) => {
     const cId = resolveEffectiveCompanyId(companyId);
     return request<{ determinations: TaxDeterminationDto[] }>(
@@ -752,6 +797,89 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       }
+    );
+  },
+
+  getCompanyTaxConfigurations: (companyId: string | null | undefined) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ configurations: CompanyTaxConfigurationDto[] }>(
+      `/api/companies/${cId}/tax-configurations`
+    );
+  },
+
+  saveCompanyTaxConfiguration: (
+    companyId: string | null | undefined,
+    data: {
+      tax_type_id: string;
+      operation_type?: 'ISSUED' | 'RECEIVED' | 'ALL';
+      document_category?: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+      is_enabled?: boolean;
+      default_rate?: number | null;
+      rate_basis?: 'PERCENT' | 'PER_MILLE';
+      default_concept_id?: string | null;
+      min_base_cop?: number;
+      metadata?: Record<string, any>;
+    }
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ configuration: CompanyTaxConfigurationDto }>(
+      `/api/companies/${cId}/tax-configurations`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  deleteCompanyTaxConfiguration: (companyId: string | null | undefined, id: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(
+      `/api/companies/${cId}/tax-configurations/${id}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  getThirdPartyTaxRules: (companyId: string | null | undefined, thirdPartyId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ rules: ThirdPartyTaxRuleDto[] }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules`
+    );
+  },
+
+  saveThirdPartyTaxRule: (
+    companyId: string | null | undefined,
+    thirdPartyId: string,
+    data: {
+      tax_type_id: string;
+      operation_type?: 'ISSUED' | 'RECEIVED' | 'ALL';
+      document_category?: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+      is_exempt?: boolean;
+      custom_rate?: number | null;
+      rate_basis?: 'PERCENT' | 'PER_MILLE';
+      custom_concept_id?: string | null;
+      municipality_code?: string | null;
+      notes?: string | null;
+      valid_from?: string;
+      valid_to?: string;
+    }
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ rule: ThirdPartyTaxRuleDto }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  deleteThirdPartyTaxRule: (companyId: string | null | undefined, thirdPartyId: string, id: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules/${id}`,
+      { method: 'DELETE' }
     );
   },
 

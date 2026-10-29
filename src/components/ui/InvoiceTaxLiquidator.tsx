@@ -51,6 +51,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [concepts, setConcepts] = useState<TaxConceptDto[]>([]);
   const [profile, setProfile] = useState<ThirdPartyTaxProfileDto | null>(null);
   const [determinations, setDeterminations] = useState<TaxDeterminationDto[]>([]);
+  const [companyConfigs, setCompanyConfigs] = useState<Record<string, boolean>>({});
 
   // Selección de conceptos
   const [selectedRentaConceptId, setSelectedRentaConceptId] = useState<string>('');
@@ -80,10 +81,6 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const executeCalculation = useCallback(
     async (rentaId: string | null, icaId: string | null) => {
       if (!companyId || !documentId) return;
-      if (!rentaId && !icaId) {
-        setDeterminations([]);
-        return;
-      }
 
       setCalculating(true);
       setError(null);
@@ -116,13 +113,24 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
     setError(null);
 
     try {
-      const [conceptsRes, detRes] = await Promise.all([
+      const [conceptsRes, detRes, configsRes] = await Promise.all([
         api.getTaxConcepts(),
         api.getDocumentTaxDeterminations(companyId, documentId).catch(() => ({ determinations: [] })),
+        api.getCompanyTaxConfigurations(companyId).catch(() => ({ configurations: [] })),
       ]);
 
       setConcepts(conceptsRes.concepts);
       setDeterminations(detRes.determinations);
+
+      // Mapear qué impuestos están habilitados para la empresa
+      const enabledMap: Record<string, boolean> = {};
+      for (const conf of configsRes.configurations) {
+        if (conf.is_enabled) {
+          enabledMap[conf.tax_type_code] = true;
+          enabledMap[conf.tax_type_id] = true;
+        }
+      }
+      setCompanyConfigs(enabledMap);
 
       let initialRenta = '';
       let initialIca = '';
@@ -345,44 +353,48 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       {/* Selectores de Conceptos con Cálculo Instantáneo */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* ReteFuente Concept */}
-        <div>
-          <label className="block text-[11px] font-medium text-ink-muted mb-1">
-            Concepto de Retención en la Fuente
-          </label>
-          <select
-            value={selectedRentaConceptId}
-            onChange={handleRentaChange}
-            disabled={loading}
-            className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-medium"
-          >
-            <option value="">-- No aplicar / Seleccionar concepto --</option>
-            {rentaConcepts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {(Object.keys(companyConfigs).length === 0 || companyConfigs['RENTA_RETE']) && (
+          <div>
+            <label className="block text-[11px] font-medium text-ink-muted mb-1">
+              Concepto de Retención en la Fuente
+            </label>
+            <select
+              value={selectedRentaConceptId}
+              onChange={handleRentaChange}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-medium"
+            >
+              <option value="">-- No aplicar / Seleccionar concepto --</option>
+              {rentaConcepts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {/* ReteICA Concept */}
-        <div>
-          <label className="block text-[11px] font-medium text-ink-muted mb-1">
-            Concepto de Retención de ICA
-          </label>
-          <select
-            value={selectedIcaConceptId}
-            onChange={handleIcaChange}
-            disabled={loading}
-            className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-medium"
-          >
-            <option value="">-- No aplicar / Seleccionar concepto --</option>
-            {icaConcepts.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+        {(Object.keys(companyConfigs).length === 0 || companyConfigs['ICA_RETE']) && (
+          <div>
+            <label className="block text-[11px] font-medium text-ink-muted mb-1">
+              Concepto de Retención de ICA
+            </label>
+            <select
+              value={selectedIcaConceptId}
+              onChange={handleIcaChange}
+              disabled={loading}
+              className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-medium"
+            >
+              <option value="">-- No aplicar / Seleccionar concepto --</option>
+              {icaConcepts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* Barra de Estado y Base Gravable */}
@@ -401,7 +413,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
           <button
             type="button"
             onClick={() => void executeCalculation(selectedRentaConceptId || null, selectedIcaConceptId || null)}
-            disabled={loading || calculating || (!selectedRentaConceptId && !selectedIcaConceptId)}
+            disabled={loading || calculating}
             className="px-3.5 py-1.5 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand/90 transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${calculating ? 'animate-spin' : ''}`} />
