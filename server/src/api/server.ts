@@ -980,7 +980,7 @@ export async function buildServer(
   app.post(
     '/api/companies/:companyId/documents/:documentId/sync-to-siigo',
     {
-      preHandler: [guards.requireCompany, guards.requirePermission('documents.write')],
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
     },
     async (req) => {
       const { companyId, documentId } = req.params as { companyId: string; documentId: string };
