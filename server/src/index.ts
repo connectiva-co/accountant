@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
+import fastifyStatic from '@fastify/static';
 import { buildServer } from './api/server.js';
 import { createDb, createPool, loadEnv, requireDatabaseUrl } from './db/connection.js';
 import { migrateToLatest } from './db/migrator.js';
@@ -22,6 +25,23 @@ async function main(): Promise<void> {
 
   const db = createDb(url);
   const app = await buildServer(db, { logger: logLevel !== 'silent' });
+
+  // Servir frontend compilado si existe
+  const publicDir = process.env.PUBLIC_DIR ?? path.resolve(process.cwd(), '../dist');
+  if (existsSync(publicDir)) {
+    console.error(`[static] Sirviendo SPA desde ${publicDir}`);
+    await app.register(fastifyStatic, {
+      root: publicDir,
+      prefix: '/',
+    });
+    app.setNotFoundHandler((req, reply) => {
+      if (req.raw.url && req.raw.url.startsWith('/api')) {
+        reply.code(404).send({ error: 'Ruta no encontrada', status: 404 });
+        return;
+      }
+      reply.sendFile('index.html');
+    });
+  }
 
   const shutdown = async (signal: string): Promise<void> => {
     console.error(`[server] ${signal}: cerrando...`);

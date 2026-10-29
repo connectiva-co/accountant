@@ -50,6 +50,7 @@ const PUBLIC_ROUTES: Array<{ method: string; url: string }> = [
 
 function isPublic(method: string, routeUrl: string | undefined): boolean {
   if (!routeUrl) return false;
+  if (!routeUrl.startsWith('/api')) return true;
   return PUBLIC_ROUTES.some((r) => r.method === method && r.url === routeUrl);
 }
 

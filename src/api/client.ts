@@ -9,10 +9,12 @@ export type { ParsedUblInvoice };
  */
 
 const defaultApiUrl = typeof window !== 'undefined'
-  ? `${window.location.protocol}//${window.location.hostname}:3001`
+  ? (window.location.port === '5173' || window.location.port === '3000'
+      ? `${window.location.protocol}//${window.location.hostname}:3001`
+      : '')
   : 'http://localhost:3001';
 
-const BASE = (import.meta.env.VITE_API_URL || defaultApiUrl).replace(/\/+$/, '');
+const BASE = (import.meta.env.VITE_API_URL !== undefined ? import.meta.env.VITE_API_URL : defaultApiUrl).replace(/\/+$/, '');
 
 export class ApiError extends Error {
   constructor(
@@ -461,6 +463,7 @@ export interface CompanyTaxConfigurationDto {
   rate_basis: 'PERCENT' | 'PER_MILLE';
   default_concept_id: string | null;
   default_concept_name?: string | null;
+  accounting_account?: string | null;
   min_base_cop: number;
   metadata?: Record<string, any>;
   created_at: string;
@@ -481,6 +484,7 @@ export interface ThirdPartyTaxRuleDto {
   rate_basis: 'PERCENT' | 'PER_MILLE';
   custom_concept_id: string | null;
   custom_concept_name?: string | null;
+  accounting_account?: string | null;
   municipality_code: string | null;
   notes: string | null;
   valid_from: string;
@@ -817,6 +821,7 @@ export const api = {
       default_rate?: number | null;
       rate_basis?: 'PERCENT' | 'PER_MILLE';
       default_concept_id?: string | null;
+      accounting_account?: string | null;
       min_base_cop?: number;
       metadata?: Record<string, any>;
     }
@@ -858,6 +863,7 @@ export const api = {
       custom_rate?: number | null;
       rate_basis?: 'PERCENT' | 'PER_MILLE';
       custom_concept_id?: string | null;
+      accounting_account?: string | null;
       municipality_code?: string | null;
       notes?: string | null;
       valid_from?: string;
@@ -880,6 +886,14 @@ export const api = {
     return request<{ success: boolean }>(
       `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules/${id}`,
       { method: 'DELETE' }
+    );
+  },
+
+  syncDocumentToSiigo: (companyId: string | null | undefined, documentId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean; external_id: string; message: string; number?: number }>(
+      `/api/companies/${cId}/documents/${documentId}/sync-to-siigo`,
+      { method: 'POST' }
     );
   },
 

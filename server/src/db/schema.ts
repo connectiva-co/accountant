@@ -685,6 +685,7 @@ export interface CompanyTaxConfigurationsTable {
   default_rate: number | null;
   rate_basis: Generated<RateBasis>;
   default_concept_id: string | null;
+  accounting_account: string | null;
   min_base_cop: Generated<number>;
   applies_to_declarant: boolean | null;
   metadata: Generated<Json>;
@@ -703,6 +704,7 @@ export interface ThirdPartyTaxRulesTable {
   custom_rate: number | null;
   rate_basis: Generated<RateBasis>;
   custom_concept_id: string | null;
+  accounting_account: string | null;
   municipality_code: string | null;
   notes: string | null;
   valid_from: ColumnType<string, string | undefined, string>;

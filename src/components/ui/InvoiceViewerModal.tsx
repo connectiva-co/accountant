@@ -13,6 +13,7 @@ import {
   Loader2,
   Code2,
   RefreshCw,
+  UploadCloud,
 } from 'lucide-react';
 import { api, type ParsedUblInvoice } from '../../api/client';
 import type { RadianRecord } from '../../types/radian';
@@ -37,6 +38,32 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
     companyId ||
     (typeof window !== 'undefined' ? localStorage.getItem('accountant_selected_company_id') : null) ||
     'c92e7f20-3aff-4c6d-860e-795bbf5c061d';
+
+  const [syncingToSiigo, setSyncingToSiigo] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleSyncToSiigo = async () => {
+    if (!document.id || !effectiveCompanyId) return;
+    try {
+      setSyncingToSiigo(true);
+      setSyncResult(null);
+      const res = await api.syncDocumentToSiigo(effectiveCompanyId, document.id);
+      setSyncResult({
+        success: true,
+        message: `Comprobante creado exitosamente en Siigo: #${res.number || res.external_id || 'OK'}`,
+      });
+      if (onTaxesSaved) {
+        onTaxesSaved();
+      }
+    } catch (err) {
+      setSyncResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Error al sincronizar con Siigo',
+      });
+    } finally {
+      setSyncingToSiigo(false);
+    }
+  };
 
   const docFolio = document.Prefijo ? `${document.Prefijo}-${document.Folio}` : String(document.Folio);
 
@@ -178,6 +205,12 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
                 <InvoiceTaxLiquidator
                   documentId={document.id}
                   companyId={effectiveCompanyId}
+                  thirdPartyIdentifier={String(
+                    document.Grupo === 'Recibido' ? document['NIT Emisor'] : document['NIT Receptor']
+                  )}
+                  thirdPartyName={String(
+                    document.Grupo === 'Recibido' ? document['Nombre Emisor'] : document['Nombre Receptor']
+                  )}
                   defaultBase={document.baseCalculada || Math.max(0, (document.Total || 0) - (document.IVA || 0))}
                   totalDocument={document.Total || 0}
                   ivaDocument={document.IVA || 0}
@@ -469,15 +502,36 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
         </div>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-end px-6 py-3 border-t border-line bg-canvas text-[11px] text-ink-muted">
-          
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 rounded-md bg-surface hover:bg-canvas border border-line text-ink font-medium transition cursor-pointer"
-          >
-            Cerrar
-          </button>
+        <div className="flex items-center justify-between px-6 py-3 border-t border-line bg-canvas text-[11px] text-ink-muted">
+          <div>
+            {syncResult && (
+              <span className={`text-[12px] font-medium ${syncResult.success ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {syncResult.message}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSyncToSiigo}
+              disabled={syncingToSiigo || document.match_status === 'MATCHED'}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer text-white shadow-xs ${
+                document.match_status === 'MATCHED'
+                  ? 'bg-ink-muted/50 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
+            >
+              {syncingToSiigo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
+              {document.match_status === 'MATCHED' ? 'Sincronizado con Siigo' : syncingToSiigo ? 'Subiendo a Siigo...' : 'Subir a Siigo (Comprobante)'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-md bg-surface hover:bg-canvas border border-line text-ink font-medium transition cursor-pointer"
+            >
+              Cerrar
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -974,6 +974,215 @@ export async function buildServer(
     },
   );
 
+  /* ---------------------------------------------------------------- */
+  /* Emisión / Sincronización de Factura o Compra a Siigo             */
+  /* ---------------------------------------------------------------- */
+  app.post(
+    '/api/companies/:companyId/documents/:documentId/sync-to-siigo',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('documents.write')],
+    },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+
+      // 1. Obtener documento y terceros
+      const doc = await db
+        .selectFrom('documents')
+        .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
+        .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
+        .selectAll('documents')
+        .select([
+          'issuer.tax_id as issuer_nit',
+          'issuer.legal_name as issuer_name',
+          'receiver.tax_id as receiver_nit',
+          'receiver.legal_name as receiver_name',
+        ])
+        .where('documents.id', '=', documentId)
+        .where('documents.company_id', '=', companyId)
+        .executeTakeFirst();
+
+      if (!doc) {
+        throw new HttpError(404, 'DOCUMENTO_NO_ENCONTRADO', 'Documento no encontrado.');
+      }
+
+      // 2. Obtener cliente Siigo
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+      const siigoClient = resolved.client as any;
+
+      // 3. Determinar tercero y dirección
+      const isPurchase = doc.direction === 'RECEIVED';
+      const thirdPartyId = isPurchase ? doc.issuer_id : doc.receiver_id;
+      const thirdPartyNit = isPurchase ? doc.issuer_nit : doc.receiver_nit;
+
+      if (!thirdPartyNit) {
+        throw new HttpError(400, 'TERCERO_SIN_NIT', 'El tercero del documento no tiene NIT.');
+      }
+
+      // 4. Obtener determinaciones de impuestos
+      const determinations = await db
+        .selectFrom('document_tax_determinations as d')
+        .innerJoin('tax_types as tt', 'tt.id', 'd.tax_type_id')
+        .selectAll('d')
+        .select(['tt.code as tax_type_code', 'tt.name as tax_type_name'])
+        .where('d.document_id', '=', documentId)
+        .where('d.company_id', '=', companyId)
+        .execute();
+
+      // 5. Obtener reglas de cuenta contable del tercero y de la empresa
+      const tpRules = thirdPartyId
+        ? await db
+            .selectFrom('third_party_tax_rules')
+            .selectAll()
+            .where('company_id', '=', companyId)
+            .where('third_party_id', '=', thirdPartyId)
+            .execute()
+        : [];
+
+      const companyConfigs = await db
+        .selectFrom('company_tax_configurations')
+        .selectAll()
+        .where('company_id', '=', companyId)
+        .execute();
+
+      // 6. Preparar líneas del comprobante contable (Journal)
+      // Tipo de comprobante en Siigo: buscar comprobantes tipo CC o usar default 1
+      let documentTypeId = 1;
+      try {
+        const docTypes = await siigoClient.catalogs.documentTypes({ type: 'CC' });
+        if (docTypes && docTypes.length > 0) {
+          documentTypeId = docTypes[0].id;
+        }
+      } catch {
+        // mantener default 1 si falla catálogo
+      }
+
+      const totalDoc = Number(doc.total ?? 0);
+      const docDate = doc.issued_at ? String(doc.issued_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const folioStr = doc.prefix ? `${doc.prefix}-${doc.folio}` : (doc.folio || doc.external_uid || documentId);
+
+      const items: any[] = [];
+      let totalRetenciones = 0;
+
+      // Líneas de retenciones calculadas
+      for (const det of determinations) {
+        const amount = Number(det.amount);
+        if (amount <= 0) continue;
+
+        // Buscar cuenta parametrizada: 1. Regla tercero, 2. Regla global empresa, 3. Default según operación
+        const tpRule = tpRules.find((r) => r.tax_type_id === det.tax_type_id);
+        const compRule = companyConfigs.find((c) => c.tax_type_id === det.tax_type_id);
+
+        const accountCode =
+          tpRule?.accounting_account ||
+          compRule?.accounting_account ||
+          (isPurchase ? '2365' : '1355');
+
+        items.push({
+          account: {
+            code: accountCode,
+            movement: isPurchase ? 'Credit' : 'Debit',
+          },
+          customer: {
+            identification: thirdPartyNit,
+            branch_office: 0,
+          },
+          description: `Retención ${det.tax_type_name} Factura ${folioStr}`,
+          value: amount,
+        });
+
+        totalRetenciones += amount;
+      }
+
+      // Si no hubo retenciones, registrar cuenta por pagar/cobrar
+      const netoPagar = totalDoc - totalRetenciones;
+
+      // Línea de gasto / cuenta de contrapartida (compra base)
+      items.push({
+        account: {
+          code: isPurchase ? '5135' : '4135',
+          movement: isPurchase ? 'Debit' : 'Credit',
+        },
+        customer: {
+          identification: thirdPartyNit,
+          branch_office: 0,
+        },
+        description: `Registro ${isPurchase ? 'Compra' : 'Venta'} Factura ${folioStr}`,
+        value: totalDoc,
+      });
+
+      // Línea de cuenta por pagar proveedor (2205) o cliente (1305)
+      items.push({
+        account: {
+          code: isPurchase ? '2205' : '1305',
+          movement: isPurchase ? 'Credit' : 'Debit',
+        },
+        customer: {
+          identification: thirdPartyNit,
+          branch_office: 0,
+        },
+        description: `Neto Factura ${folioStr}`,
+        value: netoPagar,
+      });
+
+      // 7. Enviar a Siigo mediante Journals (Comprobante Contable)
+      try {
+        const journal = await siigoClient.journals.create({
+          document: { id: documentTypeId },
+          date: docDate,
+          items,
+          observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
+        });
+
+        // 8. Guardar match y actualizar estado
+        const chosen = await pickIntegration(companyId, 'SIIGO');
+        const journalId = journal.id || String(journal.number || Date.now());
+        const extId = `SIIGO:JOURNAL:${journalId}`;
+
+        await db
+          .insertInto('document_integration_matches')
+          .values({
+            company_id: companyId,
+            document_id: documentId,
+            company_integration_id: chosen.id,
+            external_id: extId,
+            external_number: journal.number ? String(journal.number) : extId,
+            external_document_type: 'Journal',
+            match_status: 'MATCHED',
+            confidence: 1.0,
+            last_checked_at: new Date(),
+            matched_at: new Date(),
+            external_payload: journal,
+          })
+          .onConflict((oc) =>
+            oc.columns(['company_id', 'document_id', 'company_integration_id']).doUpdateSet({
+              external_id: extId,
+              external_number: journal.number ? String(journal.number) : extId,
+              external_document_type: 'Journal',
+              match_status: 'MATCHED',
+              confidence: 1.0,
+              last_checked_at: new Date(),
+              matched_at: new Date(),
+              external_payload: journal,
+            }),
+          )
+          .execute();
+
+        return {
+          success: true,
+          external_id: extId,
+          number: journal.number,
+          message: `Factura sincronizada exitosamente en Siigo como Comprobante No. ${journal.number ?? journalId}`,
+        };
+      } catch (err: any) {
+        throw new HttpError(
+          502,
+          'ERROR_EMISION_SIIGO',
+          `Error emitiendo a Siigo: ${err?.message || String(err)}`,
+        );
+      }
+    },
+  );
+
 
   /* ---------------------------------------------------------------- */
   /* Impuestos y Retenciones del Documento                            */

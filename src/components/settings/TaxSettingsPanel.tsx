@@ -6,6 +6,7 @@ import {
   Check,
   AlertCircle,
   Loader2,
+  Edit2,
 } from 'lucide-react';
 import {
   api,
@@ -31,8 +32,9 @@ export const TaxSettingsPanel: React.FC<{ companyId: string | null }> = ({ compa
   const [concepts, setConcepts] = useState<TaxConceptDto[]>([]);
   const [configurations, setConfigurations] = useState<CompanyTaxConfigurationDto[]>([]);
 
-  // Modal / Form para agregar nueva regla por empresa
+  // Modal / Form para agregar o editar regla por empresa
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [formTaxTypeId, setFormTaxTypeId] = useState<string>('');
   const [formOperationType, setFormOperationType] = useState<'ISSUED' | 'RECEIVED' | 'ALL'>('ALL');
   const [formDocCategory] = useState<'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL'>('ALL');
@@ -100,6 +102,36 @@ export const TaxSettingsPanel: React.FC<{ companyId: string | null }> = ({ compa
     } catch (err: any) {
       setError(err.message || 'No se pudo actualizar el estado.');
     }
+  };
+
+  const handleOpenEdit = (conf: CompanyTaxConfigurationDto) => {
+    setEditingId(conf.id);
+    setFormTaxTypeId(conf.tax_type_id);
+    setFormOperationType(conf.operation_type);
+    setFormRateBasis(conf.rate_basis);
+    setFormRate(
+      conf.default_rate !== null
+        ? String(conf.rate_basis === 'PER_MILLE' ? conf.default_rate * 1000 : conf.default_rate * 100)
+        : ''
+    );
+    setFormConceptId(conf.default_concept_id ?? '');
+    setFormMinBase(String(conf.min_base_cop ?? 0));
+    setFormLabel(conf.metadata?.label ?? '');
+    setFormNote(conf.metadata?.note ?? '');
+    setShowAddModal(true);
+  };
+
+  const handleOpenCreate = () => {
+    setEditingId(null);
+    if (taxTypes.length > 0) setFormTaxTypeId(taxTypes[0].id);
+    setFormOperationType('ALL');
+    setFormRateBasis('PERCENT');
+    setFormRate('');
+    setFormConceptId('');
+    setFormMinBase('0');
+    setFormLabel('');
+    setFormNote('');
+    setShowAddModal(true);
   };
 
   const handleDelete = async (id: string) => {
@@ -174,7 +206,7 @@ export const TaxSettingsPanel: React.FC<{ companyId: string | null }> = ({ compa
           </div>
           <button
             type="button"
-            onClick={() => setShowAddModal(true)}
+            onClick={handleOpenCreate}
             className="px-3 py-1.5 rounded-md bg-brand text-white text-xs font-medium hover:bg-brand/90 transition flex items-center gap-1.5 self-start sm:self-auto shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
@@ -283,11 +315,19 @@ export const TaxSettingsPanel: React.FC<{ companyId: string | null }> = ({ compa
                     </button>
                     <button
                       type="button"
+                      onClick={() => handleOpenEdit(conf)}
+                      className="p-1.5 text-ink-muted hover:text-brand transition rounded hover:bg-canvas"
+                      title="Editar regla"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => void handleDelete(conf.id)}
-                      className="p-1 text-ink-muted hover:text-rose-600 transition"
+                      className="p-1.5 text-ink-muted hover:text-rose-600 transition rounded hover:bg-canvas"
                       title="Eliminar regla"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -303,8 +343,8 @@ export const TaxSettingsPanel: React.FC<{ companyId: string | null }> = ({ compa
           <div className="bg-surface border border-line rounded-card shadow-2xl max-w-lg w-full p-6 space-y-4 text-ink">
             <div className="flex items-center justify-between pb-2 border-b border-line">
               <h3 className="font-semibold text-sm flex items-center gap-2">
-                <Plus className="w-4 h-4 text-brand" />
-                Nueva Regla de Impuesto para la Empresa
+                {editingId ? <Edit2 className="w-4 h-4 text-brand" /> : <Plus className="w-4 h-4 text-brand" />}
+                {editingId ? 'Editar Regla Impositiva' : 'Nueva Regla de Impuesto para la Empresa'}
               </h3>
               <button
                 type="button"

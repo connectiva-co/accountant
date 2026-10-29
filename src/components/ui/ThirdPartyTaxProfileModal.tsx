@@ -63,6 +63,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [ruleCustomRate, setRuleCustomRate] = useState<string>('');
   const [ruleRateBasis, setRuleRateBasis] = useState<'PERCENT' | 'PER_MILLE'>('PERCENT');
   const [ruleConceptId] = useState<string>('');
+  const [ruleAccount, setRuleAccount] = useState<string>('');
   const [ruleNotes, setRuleNotes] = useState<string>('');
 
   const loadData = useCallback(async () => {
@@ -169,11 +170,13 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         custom_rate: rateNum,
         rate_basis: ruleRateBasis,
         custom_concept_id: ruleConceptId || null,
+        accounting_account: ruleAccount.trim() || null,
         notes: ruleNotes.trim() || null,
       });
 
       setShowAddRule(false);
       setRuleCustomRate('');
+      setRuleAccount('');
       setRuleNotes('');
       setRuleIsExempt(false);
       await loadData();
@@ -376,7 +379,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                 {catalogResponsibilities.map((resp) => {
                   const checked = selectedRespIds.includes(resp.id);
                   return (
-                    <label
+                    <div
                       key={resp.id}
                       onClick={() => toggleResp(resp.id)}
                       className={`p-2.5 rounded-md border flex items-start gap-2.5 cursor-pointer transition select-none ${
@@ -386,8 +389,11 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                       <input
                         type="checkbox"
                         checked={checked}
-                        onChange={() => {}}
-                        className="mt-0.5 rounded border-line text-brand focus:ring-brand"
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          toggleResp(resp.id);
+                        }}
+                        className="mt-0.5 rounded border-line text-brand focus:ring-brand cursor-pointer"
                       />
                       <div className="flex-1 text-xs">
                         <span className="font-medium text-ink block">{resp.name}</span>
@@ -397,7 +403,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                           </span>
                         )}
                       </div>
-                    </label>
+                    </div>
                   );
                 })}
               </div>
@@ -483,6 +489,11 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                           >
                             {rateDisplay}
                           </span>
+                          {rule.accounting_account && (
+                            <span className="px-2 py-0.5 rounded bg-surface border border-line text-[10px] font-mono text-ink font-semibold">
+                              Cuenta Siigo: {rule.accounting_account}
+                            </span>
+                          )}
                         </div>
                         {rule.notes && (
                           <div className="text-[11px] text-ink-muted">{rule.notes}</div>
@@ -569,15 +580,32 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-ink-muted mb-1">Notas / Justificación</label>
-                  <input
-                    type="text"
-                    value={ruleNotes}
-                    onChange={(e) => setRuleNotes(e.target.value)}
-                    placeholder="Ej. Tarifa acordada por contrato No 123"
-                    className="w-full px-2.5 py-1.5 rounded border border-line bg-canvas text-ink"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-ink-muted mb-1">
+                      Cuenta Contable Siigo (Opcional)
+                    </label>
+                    <input
+                      type="text"
+                      value={ruleAccount}
+                      onChange={(e) => setRuleAccount(e.target.value)}
+                      placeholder="Ej. 23657003"
+                      className="w-full px-2.5 py-1.5 rounded border border-line bg-canvas text-ink font-mono font-medium"
+                    />
+                    <span className="text-[10px] text-ink-muted block mt-0.5">
+                      Código contable donde se registrará la retención en Siigo
+                    </span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-ink-muted mb-1">Notas / Justificación</label>
+                    <input
+                      type="text"
+                      value={ruleNotes}
+                      onChange={(e) => setRuleNotes(e.target.value)}
+                      placeholder="Ej. Tarifa acordada por contrato No 123"
+                      className="w-full px-2.5 py-1.5 rounded border border-line bg-canvas text-ink"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
