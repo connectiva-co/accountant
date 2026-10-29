@@ -397,6 +397,8 @@ export interface ThirdPartyTaxProfileDto {
   economic_activity_code: string | null;
   ica_municipality_code: string;
   is_declarant_renta: boolean;
+  expense_account?: string | null;
+  payable_account?: string | null;
   valid_from: string;
   valid_to: string;
   responsibilities: Array<{
@@ -413,6 +415,8 @@ export interface UpsertTaxProfileInput {
   economic_activity_code?: string | null;
   ica_municipality_code: string;
   is_declarant_renta: boolean;
+  expense_account?: string | null;
+  payable_account?: string | null;
   responsibility_ids: string[];
   valid_from?: string;
   valid_to?: string;

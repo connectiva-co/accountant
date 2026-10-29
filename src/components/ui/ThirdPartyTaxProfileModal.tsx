@@ -9,6 +9,7 @@ import {
   AlertCircle,
   Plus,
   Trash2,
+  Edit2,
 } from 'lucide-react';
 import {
   api,
@@ -51,11 +52,14 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [isDeclarantRenta, setIsDeclarantRenta] = useState<boolean>(true);
   const [economicActivityCode, setEconomicActivityCode] = useState<string>('');
   const [icaMunicipalityCode, setIcaMunicipalityCode] = useState<string>('11001');
+  const [expenseAccount, setExpenseAccount] = useState<string>('');
+  const [payableAccount, setPayableAccount] = useState<string>('');
   const [selectedRespIds, setSelectedRespIds] = useState<string[]>([]);
   const [resolvedThirdParty, setResolvedThirdParty] = useState<{ id: string; tax_id: string; legal_name: string } | null>(null);
 
-  // Formulario para nueva regla específica de este tercero
+  // Formulario para nueva/editar regla específica de este tercero
   const [showAddRule, setShowAddRule] = useState<boolean>(false);
+  const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
   const [ruleTaxTypeId, setRuleTaxTypeId] = useState<string>('');
   const [ruleOpType, setRuleOpType] = useState<'ISSUED' | 'RECEIVED' | 'ALL'>('ALL');
   const [ruleDocCat] = useState<'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL'>('ALL');
@@ -99,6 +103,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setIsDeclarantRenta(p.is_declarant_renta);
         setEconomicActivityCode(p.economic_activity_code ?? '');
         setIcaMunicipalityCode(p.ica_municipality_code ?? '11001');
+        setExpenseAccount(p.expense_account ?? '');
+        setPayableAccount(p.payable_account ?? '');
         setSelectedRespIds(p.responsibilities.map((r) => r.id));
       } else {
         const isNitJuridica = /^[89]/.test(thirdPartyIdentifier.replace(/\D/g, ''));
@@ -107,6 +113,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setIsDeclarantRenta(true);
         setEconomicActivityCode('');
         setIcaMunicipalityCode('11001');
+        setExpenseAccount('');
+        setPayableAccount('');
         setSelectedRespIds([]);
       }
     } catch (err: any) {
@@ -140,6 +148,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         economic_activity_code: economicActivityCode.trim() || undefined,
         ica_municipality_code: icaMunicipalityCode.trim() || '11001',
         is_declarant_renta: isDeclarantRenta,
+        expense_account: expenseAccount.trim() || null,
+        payable_account: payableAccount.trim() || null,
         responsibility_ids: selectedRespIds,
       });
 
@@ -149,6 +159,38 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleOpenAddRule = () => {
+    setEditingRuleId(null);
+    if (uniqueTaxTypes.length > 0) {
+      setRuleTaxTypeId(uniqueTaxTypes[0].id);
+    }
+    setRuleOpType('ALL');
+    setRuleIsExempt(false);
+    setRuleCustomRate('');
+    setRuleRateBasis('PERCENT');
+    setRuleAccount('');
+    setRuleNotes('');
+    setShowAddRule(true);
+  };
+
+  const handleEditRule = (rule: ThirdPartyTaxRuleDto) => {
+    setEditingRuleId(rule.id);
+    setRuleTaxTypeId(rule.tax_type_id);
+    setRuleOpType(rule.operation_type);
+    setRuleIsExempt(rule.is_exempt);
+    setRuleCustomRate(
+      rule.custom_rate !== null
+        ? rule.rate_basis === 'PER_MILLE'
+          ? String(rule.custom_rate * 1000)
+          : String(rule.custom_rate * 100)
+        : ''
+    );
+    setRuleRateBasis(rule.rate_basis);
+    setRuleAccount(rule.accounting_account || '');
+    setRuleNotes(rule.notes || '');
+    setShowAddRule(true);
   };
 
   const handleSaveRule = async (e: React.FormEvent) => {
@@ -175,6 +217,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
       });
 
       setShowAddRule(false);
+      setEditingRuleId(null);
       setRuleCustomRate('');
       setRuleAccount('');
       setRuleNotes('');
@@ -370,6 +413,37 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
               </div>
             </div>
 
+            {/* Cuentas Contables Siigo */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  Cuenta Gasto / Costo
+                </label>
+                <input
+                  type="text"
+                  maxLength={30}
+                  value={expenseAccount}
+                  onChange={(e) => setExpenseAccount(e.target.value)}
+                  placeholder="51103001"
+                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  Cuenta por Pagar
+                </label>
+                <input
+                  type="text"
+                  maxLength={30}
+                  value={payableAccount}
+                  onChange={(e) => setPayableAccount(e.target.value)}
+                  placeholder="22050501"
+                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono"
+                />
+              </div>
+            </div>
+
             {/* Responsabilidades DIAN */}
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-ink">
@@ -436,7 +510,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
               </p>
               <button
                 type="button"
-                onClick={() => setShowAddRule(true)}
+                onClick={handleOpenAddRule}
                 className="px-2.5 py-1.5 rounded-md bg-brand text-white text-xs font-medium hover:bg-brand/90 transition flex items-center gap-1 shadow-sm"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -499,13 +573,24 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                           <div className="text-[11px] text-ink-muted">{rule.notes}</div>
                         )}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteRule(rule.id)}
-                        className="p-1 text-ink-muted hover:text-rose-600 transition"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleEditRule(rule)}
+                          className="p-1 text-ink-muted hover:text-brand transition"
+                          title="Editar regla"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteRule(rule.id)}
+                          className="p-1 text-ink-muted hover:text-rose-600 transition"
+                          title="Eliminar regla"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -515,7 +600,9 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
             {/* Modal para agregar regla específica al tercero */}
             {showAddRule && (
               <form onSubmit={handleSaveRule} className="p-4 rounded-lg border border-brand/30 bg-brand/5 space-y-3 text-xs">
-                <span className="font-semibold text-ink block">Nueva Regla para este Tercero</span>
+                <span className="font-semibold text-ink block">
+                  {editingRuleId ? 'Editar Regla de este Tercero' : 'Nueva Regla para este Tercero'}
+                </span>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[11px] text-ink-muted mb-1">Impuesto *</label>

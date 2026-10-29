@@ -619,6 +619,8 @@ export interface ThirdPartyTaxProfilesTable {
   is_declarant_renta: Generated<boolean>;
   valid_from: ColumnType<string, string | undefined, string>;
   valid_to: ColumnType<string, string | undefined, string>;
+  expense_account: string | null;
+  payable_account: string | null;
   metadata: Generated<Json>;
   created_at: CreatedAt;
   updated_at: Timestamptz;

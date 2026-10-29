@@ -1044,20 +1044,41 @@ export async function buildServer(
         .where('company_id', '=', companyId)
         .execute();
 
+      // Perfil del tercero para cuentas de gasto / contrapartida y por pagar
+      const tpProfile = thirdPartyId
+        ? await db
+            .selectFrom('third_party_tax_profiles')
+            .selectAll()
+            .where('company_id', '=', companyId)
+            .where('third_party_id', '=', thirdPartyId)
+            .orderBy('valid_from', 'desc')
+            .executeTakeFirst()
+        : null;
+
       // 6. Preparar líneas del comprobante contable (Journal)
-      // Tipo de comprobante en Siigo: buscar comprobantes tipo CC o usar default 1
-      let documentTypeId = 1;
+      // Tipo de comprobante en Siigo: buscar comprobantes tipo CC
+      let documentTypeId = 12104;
       try {
         const docTypes = await siigoClient.catalogs.documentTypes({ type: 'CC' });
         if (docTypes && docTypes.length > 0) {
           documentTypeId = docTypes[0].id;
         }
       } catch {
-        // mantener default 1 si falla catálogo
+        // mantener default
+      }
+
+      // Catálogo de impuestos en Siigo para enlazar retenciones requeridas
+      let siigoTaxes: any[] = [];
+      try {
+        siigoTaxes = await siigoClient.catalogs.taxes();
+      } catch {
+        // ignorar si falla
       }
 
       const totalDoc = Number(doc.total ?? 0);
       const docDate = doc.issued_at ? String(doc.issued_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const docPrefix = doc.prefix || 'FE';
+      const docFolioNum = parseInt(String(doc.folio || '1').replace(/\D/g, ''), 10) || 1;
       const folioStr = doc.prefix ? `${doc.prefix}-${doc.folio}` : (doc.folio || doc.external_uid || documentId);
 
       const items: any[] = [];
@@ -1068,16 +1089,43 @@ export async function buildServer(
         const amount = Number(det.amount);
         if (amount <= 0) continue;
 
-        // Buscar cuenta parametrizada: 1. Regla tercero, 2. Regla global empresa, 3. Default según operación
         const tpRule = tpRules.find((r) => r.tax_type_id === det.tax_type_id);
         const compRule = companyConfigs.find((c) => c.tax_type_id === det.tax_type_id);
 
         const accountCode =
           tpRule?.accounting_account ||
           compRule?.accounting_account ||
-          (isPurchase ? '2365' : '1355');
+          (isPurchase ? '23654001' : '13551501');
 
-        items.push({
+        // Mapear impuesto de Siigo por porcentaje/tipo si la cuenta lo requiere
+        // Nota: para ICA la tarifa en det.rate viene por mil (ej. 0.00866 = 8.66 por mil)
+        const ratePercent = Number(det.rate) <= 0.05
+          ? Number(det.rate) * 1000 // Si es menor a 0.05 (ej. 0.00866 o 0.01104), probar por mil (8.66 o 11.04)
+          : Number(det.rate) <= 1
+          ? Number(det.rate) * 100
+          : Number(det.rate);
+
+        const matchedTax = siigoTaxes.find((st) => {
+          if (det.tax_type_code.includes('ICA')) {
+            // Comparar contra 8.66, 11.04, 9.66 o contra porcentaje directo
+            return st.type === 'ReteICA' && (
+              Math.abs(st.percentage - ratePercent) < 0.1 ||
+              Math.abs(st.percentage - Number(det.rate) * 1000) < 0.1 ||
+              Math.abs(st.percentage - Number(det.rate) * 100) < 0.1
+            );
+          }
+          if (det.tax_type_code.includes('RENTA')) {
+            return st.type === 'Retefuente' && (
+              Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1
+            );
+          }
+          if (det.tax_type_code.includes('IVA')) {
+            return st.type === 'ReteIVA' && Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1;
+          }
+          return false;
+        });
+
+        const retItem: any = {
           account: {
             code: accountCode,
             movement: isPurchase ? 'Credit' : 'Debit',
@@ -1088,32 +1136,76 @@ export async function buildServer(
           },
           description: `Retención ${det.tax_type_name} Factura ${folioStr}`,
           value: amount,
-        });
+        };
 
+        if (matchedTax) {
+          retItem.tax = { id: matchedTax.id };
+        }
+
+        items.push(retItem);
         totalRetenciones += amount;
       }
 
-      // Si no hubo retenciones, registrar cuenta por pagar/cobrar
+      // Cuenta de gasto/contrapartida (ej. 51103001) y cuenta por pagar/cobrar
+      const expenseAccount = tpProfile?.expense_account;
+      if (!expenseAccount) {
+        throw new HttpError(
+          400,
+          'CUENTA_GASTO_NO_CONFIGURADA',
+          `El tercero ${doc.issuer_name || thirdPartyNit} no tiene configurada la Cuenta Contable de Gasto/Contrapartida (ej. 51103001) en su Perfil Tributario. Por favor parametrice la cuenta en Terceros antes de sincronizar.`,
+        );
+      }
+
+      const payableAccount = tpProfile?.payable_account || (isPurchase ? '22050501' : '13050501');
+
+      // Consultar impuestos de la factura para separar IVA descontable (2408)
+      const docTaxes = await db
+        .selectFrom('document_taxes')
+        .selectAll()
+        .where('document_id', '=', documentId)
+        .execute();
+
+      const ivaTax = docTaxes.find((t) => t.tax_code === '01' || t.tax_code === 'IVA');
+      const ivaAmount = ivaTax ? Number(ivaTax.tax_amount) : 0;
+      const baseGasto = totalDoc - ivaAmount;
+
+      // Base gravable / Gasto
       const netoPagar = totalDoc - totalRetenciones;
 
-      // Línea de gasto / cuenta de contrapartida (compra base)
       items.push({
         account: {
-          code: isPurchase ? '5135' : '4135',
+          code: expenseAccount,
           movement: isPurchase ? 'Debit' : 'Credit',
         },
         customer: {
           identification: thirdPartyNit,
           branch_office: 0,
         },
-        description: `Registro ${isPurchase ? 'Compra' : 'Venta'} Factura ${folioStr}`,
-        value: totalDoc,
+        description: `Gasto Factura ${folioStr}`,
+        value: baseGasto,
       });
 
-      // Línea de cuenta por pagar proveedor (2205) o cliente (1305)
+      // Si la factura tiene IVA, registrar línea de IVA Descontable
+      if (ivaAmount > 0) {
+        const vatAccount = isPurchase ? '24081501' : '24080501';
+        items.push({
+          account: {
+            code: vatAccount,
+            movement: isPurchase ? 'Debit' : 'Credit',
+          },
+          customer: {
+            identification: thirdPartyNit,
+            branch_office: 0,
+          },
+          description: `IVA Factura ${folioStr}`,
+          value: ivaAmount,
+        });
+      }
+
+      // Cuenta por pagar proveedor (o por cobrar cliente) con objeto "due" obligatorio en Siigo
       items.push({
         account: {
-          code: isPurchase ? '2205' : '1305',
+          code: payableAccount,
           movement: isPurchase ? 'Credit' : 'Debit',
         },
         customer: {
@@ -1122,6 +1214,12 @@ export async function buildServer(
         },
         description: `Neto Factura ${folioStr}`,
         value: netoPagar,
+        due: {
+          prefix: docPrefix,
+          consecutive: docFolioNum,
+          quote: 1,
+          date: docDate,
+        },
       });
 
       // 7. Enviar a Siigo mediante Journals (Comprobante Contable)
@@ -1154,7 +1252,7 @@ export async function buildServer(
             external_payload: journal,
           })
           .onConflict((oc) =>
-            oc.columns(['company_id', 'document_id', 'company_integration_id']).doUpdateSet({
+            oc.columns(['company_integration_id', 'document_id']).doUpdateSet({
               external_id: extId,
               external_number: journal.number ? String(journal.number) : extId,
               external_document_type: 'Journal',
@@ -1174,10 +1272,12 @@ export async function buildServer(
           message: `Factura sincronizada exitosamente en Siigo como Comprobante No. ${journal.number ?? journalId}`,
         };
       } catch (err: any) {
+        req.log.error({ err, items, docDate, documentTypeId }, 'Error emitiendo a Siigo');
+        const detail = err?.details ? JSON.stringify(err.details) : err?.message || String(err);
         throw new HttpError(
           502,
           'ERROR_EMISION_SIIGO',
-          `Error emitiendo a Siigo: ${err?.message || String(err)}`,
+          `Error emitiendo a Siigo: ${detail}`,
         );
       }
     },

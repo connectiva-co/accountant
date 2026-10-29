@@ -6,7 +6,8 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { buildThirdParties, type ThirdPartyKind } from '../utils/derivations';
 import { formatCurrency, formatDate, formatNumber } from '../utils/formatters';
 import { cn } from '../utils/cn';
-import { Users } from 'lucide-react';
+import { Users, ShieldCheck } from 'lucide-react';
+import { ThirdPartyTaxProfileModal } from '../components/ui/ThirdPartyTaxProfileModal';
 
 const TABS: { id: ThirdPartyKind; label: string }[] = [
   { id: 'cliente', label: 'Clientes' },
@@ -16,8 +17,9 @@ const TABS: { id: ThirdPartyKind; label: string }[] = [
 ];
 
 export const Terceros: React.FC = () => {
-  const { periodRecords, period, nav } = useApp();
+  const { periodRecords, period, nav, selectedCompanyId, reloadDataset } = useApp();
   const [kind, setKind] = useState<ThirdPartyKind>('cliente');
+  const [activeProfileModal, setActiveProfileModal] = useState<{ nit: string; name: string } | null>(null);
 
   const all = useMemo(() => buildThirdParties(periodRecords), [periodRecords]);
   const counts = useMemo(() => {
@@ -76,18 +78,40 @@ export const Terceros: React.FC = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {list.map((t) => (
-            <button
+            <div
               key={`${t.kind}-${t.nit}`}
-              type="button"
-              onClick={() => openDetail(t.nit)}
-              className="text-left bg-surface border border-line rounded-card shadow-card p-4 transition-colors hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              className="bg-surface border border-line rounded-card shadow-card p-4 transition-all hover:border-brand/40 flex flex-col justify-between"
             >
-              <div className="text-[13px] font-semibold text-ink truncate" title={t.name}>
-                {t.name}
-              </div>
-              <div className="text-[11px] text-ink-faint num mt-0.5">NIT {t.nit}</div>
+              <div>
+                <div className="flex items-start justify-between gap-2">
+                  <div
+                    onClick={() => openDetail(t.nit)}
+                    className="text-[13px] font-semibold text-ink truncate cursor-pointer hover:text-brand"
+                    title={t.name}
+                  >
+                    {t.name}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveProfileModal({ nit: t.nit, name: t.name });
+                    }}
+                    className="shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-brand/10 hover:bg-brand/20 text-brand border border-brand/20 transition cursor-pointer"
+                    title="Configurar Perfil Tributario y Cuentas Contables"
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>Parametrizar</span>
+                  </button>
+                </div>
 
-              <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-line">
+                <div className="text-[11px] text-ink-faint num mt-0.5">NIT {t.nit}</div>
+              </div>
+
+              <div
+                onClick={() => openDetail(t.nit)}
+                className="grid grid-cols-2 gap-x-4 gap-y-2 mt-3 pt-3 border-t border-line cursor-pointer"
+              >
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.04em] text-ink-faint font-semibold">
                     {metricLabel}
@@ -113,9 +137,22 @@ export const Terceros: React.FC = () => {
                   <div className="num text-[13px] text-ink">{formatCurrency(t.iva)}</div>
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
+      )}
+
+      {activeProfileModal && (
+        <ThirdPartyTaxProfileModal
+          isOpen={true}
+          onClose={() => setActiveProfileModal(null)}
+          companyId={selectedCompanyId || 'c92e7f20-3aff-4c6d-860e-795bbf5c061d'}
+          thirdPartyIdentifier={activeProfileModal.nit}
+          thirdPartyName={activeProfileModal.name}
+          onProfileSaved={() => {
+            void reloadDataset();
+          }}
+        />
       )}
     </>
   );
