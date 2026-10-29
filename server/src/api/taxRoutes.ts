@@ -51,6 +51,7 @@ const profileUpsertSchema = z.object({
   is_declarant_renta: z.boolean().default(true),
   expense_account: z.string().max(30).optional().nullable(),
   payable_account: z.string().max(30).optional().nullable(),
+  document_type_id: z.number().int().positive().optional().nullable(),
   responsibility_ids: z.array(z.string().uuid()).default([]),
   valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   valid_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -243,6 +244,7 @@ export function registerTaxRoutes(
             is_declarant_renta: body.is_declarant_renta,
             expense_account: body.expense_account ?? null,
             payable_account: body.payable_account ?? null,
+            document_type_id: body.document_type_id ?? null,
             valid_from: body.valid_from ?? new Date().toISOString().slice(0, 10),
             valid_to: body.valid_to ?? '9999-12-31',
           })
@@ -302,6 +304,7 @@ export function registerTaxRoutes(
             is_declarant_renta: body.is_declarant_renta,
             expense_account: body.expense_account ?? existing.expense_account,
             payable_account: body.payable_account ?? existing.payable_account,
+            document_type_id: body.document_type_id ?? existing.document_type_id,
             valid_from: body.valid_from ?? existing.valid_from,
             valid_to: body.valid_to ?? existing.valid_to,
             updated_at: new Date(),
@@ -321,6 +324,7 @@ export function registerTaxRoutes(
             is_declarant_renta: body.is_declarant_renta,
             expense_account: body.expense_account ?? null,
             payable_account: body.payable_account ?? null,
+            document_type_id: body.document_type_id ?? null,
             valid_from: body.valid_from ?? new Date().toISOString().slice(0, 10),
             valid_to: body.valid_to ?? '9999-12-31',
           })

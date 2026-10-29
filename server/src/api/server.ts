@@ -975,6 +975,28 @@ export async function buildServer(
   );
 
   /* ---------------------------------------------------------------- */
+  /* Catálogo de Tipos de Documento/Comprobante de Siigo              */
+  /* ---------------------------------------------------------------- */
+  app.get(
+    '/api/companies/:companyId/integrations/siigo/document-types',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { type } = req.query as { type?: string };
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+      const siigoClient = resolved.client as any;
+      try {
+        const types = await siigoClient.catalogs.documentTypes({ type: type || 'CC' });
+        return { document_types: types || [] };
+      } catch (err: any) {
+        throw new HttpError(502, 'ERROR_CATALOGO_SIIGO', `Error consultando tipos de documento de Siigo: ${err?.message || String(err)}`);
+      }
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
   /* Emisión / Sincronización de Factura o Compra a Siigo             */
   /* ---------------------------------------------------------------- */
   app.post(
@@ -1056,15 +1078,42 @@ export async function buildServer(
         : null;
 
       // 6. Preparar líneas del comprobante contable (Journal)
-      // Tipo de comprobante en Siigo: buscar comprobantes tipo CC
-      let documentTypeId = 12104;
-      try {
-        const docTypes = await siigoClient.catalogs.documentTypes({ type: 'CC' });
-        if (docTypes && docTypes.length > 0) {
-          documentTypeId = docTypes[0].id;
+      // Tipo de comprobante en Siigo:
+      // Prioridad 1: Configuración específica del tercero (document_type_id)
+      // Prioridad 2: Setting de la empresa (siigo.purchase_voucher_type_id)
+      // Prioridad 3: Buscar comprobante CC-16 ("CAUSACION CUENTAS POR PAGAR" id 43000) o primer CC
+      let documentTypeId = tpProfile?.document_type_id ?? null;
+
+      if (!documentTypeId) {
+        // Intentar leer de settings de la empresa
+        const compSetting = await db
+          .selectFrom('settings')
+          .select(['value'])
+          .where('company_id', '=', companyId)
+          .where('scope', '=', 'siigo')
+          .where('key', '=', 'purchase_voucher_type_id')
+          .executeTakeFirst();
+
+        if (compSetting?.value && Number(compSetting.value)) {
+          documentTypeId = Number(compSetting.value);
         }
-      } catch {
-        // mantener default
+      }
+
+      if (!documentTypeId) {
+        try {
+          const docTypes = await siigoClient.catalogs.documentTypes({ type: 'CC' });
+          if (docTypes && docTypes.length > 0) {
+            // Buscar CC-16 (CAUSACION CUENTAS POR PAGAR)
+            const cc16 = docTypes.find((dt: any) => String(dt.code) === '16' || String(dt.id) === '43000');
+            documentTypeId = cc16 ? cc16.id : docTypes[0].id;
+          }
+        } catch {
+          documentTypeId = 43000; // Default CC-16 en Siigo
+        }
+      }
+
+      if (!documentTypeId) {
+        documentTypeId = 43000;
       }
 
       // Catálogo de impuestos en Siigo para enlazar retenciones requeridas

@@ -399,6 +399,7 @@ export interface ThirdPartyTaxProfileDto {
   is_declarant_renta: boolean;
   expense_account?: string | null;
   payable_account?: string | null;
+  document_type_id?: number | null;
   valid_from: string;
   valid_to: string;
   responsibilities: Array<{
@@ -417,6 +418,7 @@ export interface UpsertTaxProfileInput {
   is_declarant_renta: boolean;
   expense_account?: string | null;
   payable_account?: string | null;
+  document_type_id?: number | null;
   responsibility_ids: string[];
   valid_from?: string;
   valid_to?: string;
@@ -753,6 +755,13 @@ export const api = {
       invoice: ParsedUblInvoice;
       raw_xml: string;
     }>(`/api/companies/${cId}/documents/${documentId}/xml`);
+  },
+
+  getSiigoDocumentTypes: (companyId: string | null | undefined, type: string = 'CC') => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ document_types: Array<{ id: number; code: string; name: string; description?: string }> }>(
+      `/api/companies/${cId}/integrations/siigo/document-types?type=${type}`
+    );
   },
 
 

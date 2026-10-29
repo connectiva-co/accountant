@@ -54,6 +54,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [icaMunicipalityCode, setIcaMunicipalityCode] = useState<string>('11001');
   const [expenseAccount, setExpenseAccount] = useState<string>('');
   const [payableAccount, setPayableAccount] = useState<string>('');
+  const [documentTypeId, setDocumentTypeId] = useState<number | null>(null);
+  const [siigoDocTypes, setSiigoDocTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [selectedRespIds, setSelectedRespIds] = useState<string[]>([]);
   const [resolvedThirdParty, setResolvedThirdParty] = useState<{ id: string; tax_id: string; legal_name: string } | null>(null);
 
@@ -76,16 +78,18 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
     setError(null);
 
     try {
-      const [respRes, profileRes, conceptsRes, rulesRes] = await Promise.all([
+      const [respRes, profileRes, conceptsRes, rulesRes, siigoTypesRes] = await Promise.all([
         api.getTaxResponsibilities(),
         api.getThirdPartyTaxProfile(companyId, thirdPartyIdentifier).catch(() => ({ profile: null, third_party: null } as any)),
         api.getTaxConcepts(),
         api.getThirdPartyTaxRules(companyId, thirdPartyIdentifier).catch(() => ({ rules: [] })),
+        api.getSiigoDocumentTypes(companyId, 'CC').catch(() => ({ document_types: [] })),
       ]);
 
       setCatalogResponsibilities(respRes.responsibilities);
       setConcepts(conceptsRes.concepts);
       setTaxRules(rulesRes.rules);
+      setSiigoDocTypes(siigoTypesRes.document_types);
 
       if (conceptsRes.concepts.length > 0 && !ruleTaxTypeId) {
         setRuleTaxTypeId(conceptsRes.concepts[0].tax_type_id);
@@ -105,6 +109,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setIcaMunicipalityCode(p.ica_municipality_code ?? '11001');
         setExpenseAccount(p.expense_account ?? '');
         setPayableAccount(p.payable_account ?? '');
+        setDocumentTypeId(p.document_type_id ?? null);
         setSelectedRespIds(p.responsibilities.map((r) => r.id));
       } else {
         const isNitJuridica = /^[89]/.test(thirdPartyIdentifier.replace(/\D/g, ''));
@@ -115,6 +120,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setIcaMunicipalityCode('11001');
         setExpenseAccount('');
         setPayableAccount('');
+        setDocumentTypeId(null);
         setSelectedRespIds([]);
       }
     } catch (err: any) {
@@ -150,6 +156,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         is_declarant_renta: isDeclarantRenta,
         expense_account: expenseAccount.trim() || null,
         payable_account: payableAccount.trim() || null,
+        document_type_id: documentTypeId,
         responsibility_ids: selectedRespIds,
       });
 
@@ -413,8 +420,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
               </div>
             </div>
 
-            {/* Cuentas Contables Siigo */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Cuentas Contables y Tipo de Comprobante Siigo */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs font-medium text-ink-muted mb-1">
                   Cuenta Gasto / Costo
@@ -441,6 +448,24 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                   placeholder="22050501"
                   className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  Tipo Comprobante (Siigo)
+                </label>
+                <select
+                  value={documentTypeId ?? ''}
+                  onChange={(e) => setDocumentTypeId(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-2.5 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand truncate"
+                >
+                  <option value="">Por defecto de empresa (CC-16)</option>
+                  {siigoDocTypes.map((dt) => (
+                    <option key={dt.id} value={dt.id}>
+                      CC-{dt.code}: {dt.name}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 

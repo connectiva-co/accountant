@@ -621,6 +621,7 @@ export interface ThirdPartyTaxProfilesTable {
   valid_to: ColumnType<string, string | undefined, string>;
   expense_account: string | null;
   payable_account: string | null;
+  document_type_id: number | null;
   metadata: Generated<Json>;
   created_at: CreatedAt;
   updated_at: Timestamptz;
