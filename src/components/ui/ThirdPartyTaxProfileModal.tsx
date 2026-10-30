@@ -56,6 +56,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [payableAccount, setPayableAccount] = useState<string>('');
   const [documentTypeId, setDocumentTypeId] = useState<number | null>(null);
   const [siigoDocTypes, setSiigoDocTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
+  const [accountingAccounts, setAccountingAccounts] = useState<Array<{ id: string; code: string; name: string; category: string | null }>>([]);
   const [selectedRespIds, setSelectedRespIds] = useState<string[]>([]);
   const [resolvedThirdParty, setResolvedThirdParty] = useState<{ id: string; tax_id: string; legal_name: string } | null>(null);
 
@@ -78,18 +79,20 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
     setError(null);
 
     try {
-      const [respRes, profileRes, conceptsRes, rulesRes, siigoTypesRes] = await Promise.all([
+      const [respRes, profileRes, conceptsRes, rulesRes, siigoTypesRes, accountsRes] = await Promise.all([
         api.getTaxResponsibilities(),
         api.getThirdPartyTaxProfile(companyId, thirdPartyIdentifier).catch(() => ({ profile: null, third_party: null } as any)),
         api.getTaxConcepts(),
         api.getThirdPartyTaxRules(companyId, thirdPartyIdentifier).catch(() => ({ rules: [] })),
         api.getSiigoDocumentTypes(companyId, 'CC').catch(() => ({ document_types: [] })),
+        api.getAccountingAccounts(companyId, { activeOnly: true }).catch(() => ({ accounts: [] })),
       ]);
 
       setCatalogResponsibilities(respRes.responsibilities);
       setConcepts(conceptsRes.concepts);
       setTaxRules(rulesRes.rules);
       setSiigoDocTypes(siigoTypesRes.document_types);
+      setAccountingAccounts(accountsRes.accounts);
 
       if (conceptsRes.concepts.length > 0 && !ruleTaxTypeId) {
         setRuleTaxTypeId(conceptsRes.concepts[0].tax_type_id);
@@ -426,28 +429,49 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                 <label className="block text-xs font-medium text-ink-muted mb-1">
                   Cuenta Gasto / Costo
                 </label>
-                <input
-                  type="text"
-                  maxLength={30}
-                  value={expenseAccount}
-                  onChange={(e) => setExpenseAccount(e.target.value)}
-                  placeholder="51103001"
-                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono"
-                />
+                <div className="space-y-1">
+                  <select
+                    value={expenseAccount}
+                    onChange={(e) => setExpenseAccount(e.target.value)}
+                    className="w-full px-2.5 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono truncate"
+                  >
+                    <option value="">Seleccionar cuenta PUC...</option>
+                    {accountingAccounts
+                      .filter((a) => a.code.startsWith('5') || a.code.startsWith('6') || a.code.startsWith('7'))
+                      .map((acc) => (
+                        <option key={acc.id} value={acc.code}>
+                          {acc.code} - {acc.name}
+                        </option>
+                      ))}
+                    {expenseAccount && !accountingAccounts.some((a) => a.code === expenseAccount) && (
+                      <option value={expenseAccount}>{expenseAccount} (Personalizada)</option>
+                    )}
+                  </select>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-medium text-ink-muted mb-1">
                   Cuenta por Pagar
                 </label>
-                <input
-                  type="text"
-                  maxLength={30}
-                  value={payableAccount}
+                <select
+                  value={payableAccount || '22050501'}
                   onChange={(e) => setPayableAccount(e.target.value)}
-                  placeholder="22050501"
-                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono"
-                />
+                  className="w-full px-2.5 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono truncate"
+                >
+                  <option value="22050501">22050501 - Proveedores nacionales (Default)</option>
+                  {accountingAccounts
+                    .filter((a) => a.code.startsWith('22') || a.code.startsWith('23'))
+                    .filter((a) => a.code !== '22050501')
+                    .map((acc) => (
+                      <option key={acc.id} value={acc.code}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  {payableAccount && payableAccount !== '22050501' && !accountingAccounts.some((a) => a.code === payableAccount) && (
+                    <option value={payableAccount}>{payableAccount} (Personalizada)</option>
+                  )}
+                </select>
               </div>
 
               <div>

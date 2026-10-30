@@ -716,6 +716,19 @@ export interface ThirdPartyTaxRulesTable {
   updated_at: Timestamptz;
 }
 
+export interface AccountingAccountsTable {
+  id: Generated<string>;
+  company_id: string;
+  code: string;
+  name: string;
+  level: Generated<string>;
+  is_transactional: Generated<boolean>;
+  is_active: Generated<boolean>;
+  category: string | null;
+  created_at: CreatedAt;
+  updated_at: Timestamptz;
+}
+
 export interface Database {
   companies: CompaniesTable;
   imports: ImportsTable;
@@ -743,6 +756,7 @@ export interface Database {
   integration_runs: IntegrationRunsTable;
   document_integration_matches: DocumentIntegrationMatchesTable;
   sync_policies: SyncPoliciesTable;
+  accounting_accounts: AccountingAccountsTable;
   sync_routes: SyncRoutesTable;
   sync_mappings: SyncMappingsTable;
   entity_external_refs: EntityExternalRefsTable;

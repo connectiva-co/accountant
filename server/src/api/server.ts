@@ -997,6 +997,175 @@ export async function buildServer(
   );
 
   /* ---------------------------------------------------------------- */
+  /* Plan de Cuentas (PUC / Accounting Accounts)                      */
+  /* ---------------------------------------------------------------- */
+  app.get(
+    '/api/companies/:companyId/accounting-accounts',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('integrations.read')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { activeOnly, category } = req.query as { activeOnly?: string; category?: string };
+
+      let query = db
+        .selectFrom('accounting_accounts')
+        .selectAll()
+        .where('company_id', '=', companyId);
+
+      if (activeOnly === 'true') {
+        query = query.where('is_active', '=', true);
+      }
+      if (category) {
+        query = query.where('category', '=', category);
+      }
+
+      const accounts = await query.orderBy('code', 'asc').execute();
+      return { accounts };
+    },
+  );
+
+  app.patch(
+    '/api/companies/:companyId/accounting-accounts/:id/toggle',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('integrations.configure')],
+    },
+    async (req) => {
+      const { companyId, id } = req.params as { companyId: string; id: string };
+      const { is_active } = req.body as { is_active: boolean };
+
+      await db
+        .updateTable('accounting_accounts')
+        .set({ is_active, updated_at: new Date() })
+        .where('id', '=', id)
+        .where('company_id', '=', companyId)
+        .execute();
+
+      return { success: true };
+    },
+  );
+
+  app.post(
+    '/api/companies/:companyId/integrations/siigo/sync-accounts',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+      const siigoClient = resolved.client as any;
+
+      try {
+        const currentYear = new Date().getFullYear();
+        // 1. Solicitar a Siigo el reporte de balance de prueba
+        const report = await siigoClient.reports.testBalance({
+          year: currentYear,
+          month_start: 1,
+          month_end: 12,
+          includes_tax_difference: true,
+        });
+
+        if (!report || !report.file_url) {
+          throw new HttpError(502, 'ERROR_REPORTE_SIIGO', 'Siigo no devolvió la URL del archivo de balance.');
+        }
+
+        // 2. Descargar el archivo Excel
+        const fileResponse = await fetch(report.file_url);
+        if (!fileResponse.ok) {
+          throw new HttpError(502, 'ERROR_DESCARGA_EXCEL', 'No se pudo descargar el archivo Excel de Siigo.');
+        }
+
+        const arrayBuffer = await fileResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const XLSX = await import('xlsx');
+        const wb = XLSX.read(buffer, { type: 'buffer' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        sheet['!ref'] = 'A1:Z10000';
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+
+        // 3. Extraer cuentas auxiliares transaccionales (Nivel: Auxiliar, Transaccional: Sí)
+        const accountsToUpsert = new Map<string, { code: string; name: string; level: string; category: string }>();
+
+        for (let i = 8; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row) continue;
+          const level = String(row[0] || '').trim();
+          const code = String(row[2] || '').trim();
+          const name = String(row[3] || '').trim();
+
+          // Filtrar por Nivel Auxiliar y código numérico válido
+          if (level === 'Auxiliar' && code && /^\d+$/.test(code)) {
+            let cat = 'OTHER';
+            if (code.startsWith('1')) cat = 'ASSET';
+            else if (code.startsWith('2')) cat = 'LIABILITY';
+            else if (code.startsWith('3')) cat = 'EQUITY';
+            else if (code.startsWith('4')) cat = 'REVENUE';
+            else if (code.startsWith('5') || code.startsWith('6') || code.startsWith('7')) cat = 'EXPENSE';
+
+            accountsToUpsert.set(code, {
+              code,
+              name: name || `Cuenta ${code}`,
+              level,
+              category: cat,
+            });
+          }
+        }
+
+        // 4. Guardar en base de datos
+        let inserted = 0;
+        let updated = 0;
+
+        for (const item of accountsToUpsert.values()) {
+          const existing = await db
+            .selectFrom('accounting_accounts')
+            .select(['id'])
+            .where('company_id', '=', companyId)
+            .where('code', '=', item.code)
+            .executeTakeFirst();
+
+          if (existing) {
+            await db
+              .updateTable('accounting_accounts')
+              .set({
+                name: item.name,
+                level: item.level,
+                category: item.category,
+                updated_at: new Date(),
+              })
+              .where('id', '=', existing.id)
+              .execute();
+            updated++;
+          } else {
+            await db
+              .insertInto('accounting_accounts')
+              .values({
+                company_id: companyId,
+                code: item.code,
+                name: item.name,
+                level: item.level,
+                category: item.category,
+                is_transactional: true,
+                is_active: true,
+              })
+              .execute();
+            inserted++;
+          }
+        }
+
+        return {
+          success: true,
+          total_synced: accountsToUpsert.size,
+          inserted,
+          updated,
+        };
+      } catch (err: any) {
+        req.log.error({ err }, 'Error sincronizando cuentas contables desde Siigo');
+        throw new HttpError(502, 'ERROR_SYNC_CUENTAS', `Error sincronizando cuentas desde Siigo: ${err.message || String(err)}`);
+      }
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
   /* Emisión / Sincronización de Factura o Compra a Siigo             */
   /* ---------------------------------------------------------------- */
   app.post(

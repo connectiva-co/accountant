@@ -424,6 +424,19 @@ export interface UpsertTaxProfileInput {
   valid_to?: string;
 }
 
+export interface AccountingAccountDto {
+  id: string;
+  company_id: string;
+  code: string;
+  name: string;
+  level: string;
+  is_transactional: boolean;
+  is_active: boolean;
+  category: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TaxDeterminationDto {
   id?: string;
   tax_type_id?: string;
@@ -761,6 +774,32 @@ export const api = {
     const cId = resolveEffectiveCompanyId(companyId);
     return request<{ document_types: Array<{ id: number; code: string; name: string; description?: string }> }>(
       `/api/companies/${cId}/integrations/siigo/document-types?type=${type}`
+    );
+  },
+
+  getAccountingAccounts: (companyId: string | null | undefined, options?: { activeOnly?: boolean; category?: string }) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    const params = new URLSearchParams();
+    if (options?.activeOnly) params.set('activeOnly', 'true');
+    if (options?.category) params.set('category', options.category);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return request<{ accounts: AccountingAccountDto[] }>(`/api/companies/${cId}/accounting-accounts${qs}`);
+  },
+
+  toggleAccountingAccount: (companyId: string | null | undefined, id: string, is_active: boolean) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/accounting-accounts/${id}/toggle`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active }),
+    });
+  },
+
+  syncAccountingAccountsFromSiigo: (companyId: string | null | undefined) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean; total_synced: number; inserted: number; updated: number }>(
+      `/api/companies/${cId}/integrations/siigo/sync-accounts`,
+      { method: 'POST' }
     );
   },
 

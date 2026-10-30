@@ -7,11 +7,10 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
-  AlertTriangle,
-  HelpCircle,
+  Info,
   Edit3,
   ExternalLink,
-  RefreshCw,
+  SlidersHorizontal,
 } from 'lucide-react';
 import {
   api,
@@ -65,6 +64,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [overrideReason, setOverrideReason] = useState<string>('');
   const [overrideSaving, setOverrideSaving] = useState<boolean>(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
+  const [showConcepts, setShowConcepts] = useState<boolean>(false);
 
   // Conceptos filtrados por impuesto
   const rentaConcepts = useMemo(
@@ -239,39 +239,31 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const netoPagar = Math.max(0, totalDocument - totalRetenciones);
 
   return (
-    <div className="p-4 rounded-card border border-line bg-surface space-y-4 text-ink">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-line">
+    <div className="rounded-card border border-line bg-surface text-ink">
+      <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="p-2 rounded-lg bg-brand/10 text-brand">
-            <Calculator className="w-5 h-5" />
+          <div className="rounded-md bg-brand/10 p-2 text-brand">
+            <Calculator className="h-4 w-4" />
           </div>
           <div>
-            <h4 className="font-semibold text-xs text-ink flex items-center gap-1.5">
-              Liquidación Tributaria (Motor Parametrizable)
-              <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
-                Normativa DIAN & Distrital
-              </span>
-            </h4>
-            <p className="text-[11px] text-ink-muted">
-              Seleccione el concepto de la operación; el motor determinará la regla y tarifa en tiempo real.
-            </p>
+            <h4 className="text-xs font-semibold text-ink">Liquidación tributaria</h4>
+            <p className="text-[11px] text-ink-muted">Retenciones calculadas según el perfil RUT y las reglas vigentes.</p>
           </div>
         </div>
-
-        {/* Perfil RUT Trigger */}
         {thirdPartyIdentifier && (
           <button
             type="button"
             onClick={() => setShowProfileModal(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line hover:border-brand/40 bg-canvas/60 text-xs font-medium text-ink hover:text-brand transition shadow-sm"
+            className="inline-flex items-center gap-1.5 self-start rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition hover:border-brand/40 hover:text-brand sm:self-auto"
           >
-            <ShieldCheck className="w-3.5 h-3.5 text-brand" />
-            <span>{profile ? 'Ver / Editar Perfil RUT' : 'Configurar Perfil RUT'}</span>
-            <ExternalLink className="w-3 h-3 text-ink-muted" />
+            <ShieldCheck className="h-3.5 w-3.5 text-brand" />
+            <span>{profile ? 'Ver perfil RUT' : 'Configurar perfil RUT'}</span>
+            <ExternalLink className="h-3 w-3 text-ink-muted" />
           </button>
         )}
       </div>
+
+      <div className="space-y-4 p-4">
 
       {error && (
         <div className="p-3 rounded-lg border border-red-500/20 bg-red-500/10 text-red-600 text-xs flex items-center justify-between gap-2">
@@ -289,9 +281,9 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
         </div>
       )}
 
-      {/* Resumen del Perfil Fiscal del Tercero */}
+      {/* Contexto fiscal del tercero: disponible, sin competir con el cálculo. */}
       {thirdPartyIdentifier && (
-        <div className="p-3 rounded-lg border border-line bg-canvas/40 space-y-2">
+        <div className="rounded-lg border border-line bg-canvas/40 px-3 py-2.5">
           <div className="flex items-center justify-between text-xs">
             <span className="font-medium text-ink flex items-center gap-1.5">
               {profile?.person_type === 'NATURAL' ? (
@@ -300,10 +292,10 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
                 <Building2 className="w-3.5 h-3.5 text-ink-muted" />
               )}
               {thirdPartyName || 'Tercero asociado'}{' '}
-              <span className="font-mono text-ink-muted text-[11px]">({thirdPartyIdentifier})</span>
+              <span className="font-mono text-[11px] text-ink-muted">({thirdPartyIdentifier})</span>
             </span>
             {profile ? (
-              <span className="text-[11px] font-medium text-emerald-600 flex items-center gap-1">
+              <span className="flex items-center gap-1 text-[11px] font-medium text-brand">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 Perfil RUT activo
               </span>
@@ -311,32 +303,32 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
               <button
                 type="button"
                 onClick={() => setShowProfileModal(true)}
-                className="text-[11px] font-medium text-amber-600 hover:text-amber-700 flex items-center gap-1 underline"
+                className="flex items-center gap-1 text-[11px] font-medium text-warning underline underline-offset-2 hover:text-warning/80"
               >
-                <AlertTriangle className="w-3.5 h-3.5" />
+                <Info className="h-3.5 w-3.5" />
                 Configurar Perfil RUT ahora
               </button>
             )}
           </div>
 
           {profile ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+            <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+              <span className="rounded border border-line bg-surface px-2 py-0.5 font-medium text-ink">
                 {profile.person_type === 'JURIDICA' ? 'Persona Jurídica' : 'Persona Natural'}
               </span>
-              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+              <span className="rounded border border-line bg-surface px-2 py-0.5 font-medium text-ink">
                 {profile.tax_regime === 'SIMPLE' ? 'Régimen Simple (RST)' : `Régimen ${profile.tax_regime}`}
               </span>
-              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+              <span className="rounded border border-line bg-surface px-2 py-0.5 font-medium text-ink">
                 {profile.is_declarant_renta ? 'Declarante de Renta' : 'No Declarante'}
               </span>
-              <span className="px-2 py-0.5 rounded border border-line bg-surface text-ink font-medium">
+              <span className="rounded border border-line bg-surface px-2 py-0.5 font-medium text-ink">
                 ICA: {profile.ica_municipality_code === '11001' ? 'Bogotá D.C. (11001)' : profile.ica_municipality_code}
               </span>
               {profile.responsibilities.map((r) => (
                 <span
                   key={r.id}
-                  className="px-2 py-0.5 rounded border border-brand/20 bg-brand/5 text-brand font-medium"
+                  className="rounded border border-line bg-surface px-2 py-0.5 font-medium text-ink-muted"
                 >
                   {r.name}
                 </span>
@@ -350,8 +342,35 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
         </div>
       )}
 
-      {/* Selectores de Conceptos con Cálculo Instantáneo */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="flex flex-col gap-2 border-b border-line pb-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h5 className="text-xs font-semibold text-ink">Retenciones de esta factura</h5>
+          <p className="mt-0.5 text-[11px] text-ink-muted">
+            Base gravable: <span className="font-mono font-medium text-ink">{formatCurrency(defaultBase)}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {calculating && (
+            <span className="flex items-center gap-1 text-[11px] font-medium text-brand">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Actualizando cálculo…
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowConcepts((current) => !current)}
+            className="inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition hover:border-brand/40 hover:text-brand"
+            aria-expanded={showConcepts}
+          >
+            <SlidersHorizontal className="h-3.5 w-3.5" />
+            {showConcepts ? 'Ocultar conceptos' : 'Cambiar conceptos'}
+          </button>
+        </div>
+      </div>
+
+      {/* Los conceptos aparecen solo cuando el contador necesita intervenir. */}
+      {showConcepts && (
+      <div className="grid grid-cols-1 gap-3 rounded-lg border border-line bg-canvas/40 p-3 md:grid-cols-2">
         {/* ReteFuente Concept */}
         {(Object.keys(companyConfigs).length === 0 || companyConfigs['RENTA_RETE']) && (
           <div>
@@ -396,40 +415,12 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
           </div>
         )}
       </div>
-
-      {/* Barra de Estado y Base Gravable */}
-      <div className="flex items-center justify-between pt-1">
-        <div className="text-[11px] text-ink-muted">
-          Base gravable neta:{' '}
-          <span className="font-mono font-medium text-ink">{formatCurrency(defaultBase)}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          {calculating && (
-            <span className="text-xs text-brand flex items-center gap-1 font-medium">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Determinando...
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => void executeCalculation(selectedRentaConceptId || null, selectedIcaConceptId || null)}
-            disabled={loading || calculating}
-            className="px-3.5 py-1.5 rounded-lg bg-brand text-white text-xs font-medium hover:bg-brand/90 transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${calculating ? 'animate-spin' : ''}`} />
-            <span>Recalcular</span>
-          </button>
-        </div>
-      </div>
+      )}
 
       {/* Tabla / Tarjetas de Determinaciones */}
       {determinations.length > 0 && (
-        <div className="space-y-3 pt-3 border-t border-line">
-          <span className="text-[11px] font-semibold text-ink uppercase tracking-wider block">
-            Retenciones Liquidadas
-          </span>
-
-          <div className="space-y-2">
+        <div className="space-y-2">
+          <div className="overflow-hidden rounded-lg border border-line">
             {determinations.map((det, idx) => {
               const code = det.tax_type_code || det.taxTypeCode;
               const name = det.tax_type_name || det.taxTypeName || code;
@@ -440,66 +431,57 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
                 : `${(det.rate * 100).toFixed(2)} %`;
 
               const statusConfig = {
-                CALCULATED: { bg: 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20', label: 'Liquidado' },
-                EXEMPT: { bg: 'bg-blue-500/10 text-blue-600 border-blue-500/20', label: 'Exento (0%)' },
-                NOT_APPLICABLE: { bg: 'bg-gray-500/10 text-gray-500 border-gray-500/20', label: 'No Aplica (< Base Mínima)' },
-                MISSING_PROFILE: { bg: 'bg-amber-500/10 text-amber-600 border-amber-500/20', label: 'Perfil Incompleto' },
-                NO_MATCHING_RULE: { bg: 'bg-rose-500/10 text-rose-600 border-rose-500/20', label: 'Sin Regla Aplicable' },
-                REQUIRES_REVIEW: { bg: 'bg-amber-500/10 text-amber-600 border-amber-500/20', label: 'Requiere Revisión' },
-                MANUALLY_OVERRIDDEN: { bg: 'bg-purple-500/10 text-purple-600 border-purple-500/20', label: 'Ajustado Manualmente' },
-              }[det.status] || { bg: 'bg-gray-500/10 text-gray-500 border-gray-500/20', label: det.status };
+                CALCULATED: { text: 'Liquidado', className: 'text-brand' },
+                EXEMPT: { text: 'Exento (0 %)', className: 'text-info' },
+                NOT_APPLICABLE: { text: 'No aplica por base mínima', className: 'text-ink-muted' },
+                MISSING_PROFILE: { text: 'Falta información en el perfil RUT', className: 'text-warning' },
+                NO_MATCHING_RULE: { text: 'Sin regla aplicable', className: 'text-danger' },
+                REQUIRES_REVIEW: { text: 'Requiere revisión', className: 'text-warning' },
+                MANUALLY_OVERRIDDEN: { text: 'Ajuste manual aplicado', className: 'text-brand' },
+              }[det.status] || { text: det.status, className: 'text-ink-muted' };
 
               return (
                 <div
                   key={idx}
-                  className="p-3.5 rounded-lg border border-line bg-canvas/60 space-y-2 hover:border-line/80 transition"
+                  className={`bg-surface px-3 py-3 ${idx > 0 ? 'border-t border-line' : ''}`}
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-xs text-ink">{name}</span>
-                      {conceptName && (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-surface border border-line text-ink-muted">
-                          {conceptName}
-                        </span>
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_120px_120px_auto] sm:items-center">
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-ink">{name}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-ink-muted">{conceptName || 'Sin concepto seleccionado'} · Tarifa {rateDisplay}</p>
+                      {det.status !== 'CALCULATED' && (
+                        <p className={`mt-1.5 flex items-center gap-1 text-[11px] font-medium ${statusConfig.className}`}>
+                          <Info className="h-3.5 w-3.5 shrink-0" />
+                          {statusConfig.text}
+                        </p>
                       )}
-                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded border ${statusConfig.bg}`}>
-                        {statusConfig.label}
-                      </span>
                     </div>
-
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <span className="text-[11px] text-ink-muted block">
-                          Base: {formatCurrency(det.taxable_base || det.taxableBase || defaultBase)} · Tarifa: {rateDisplay}
-                        </span>
-                        <span className="num font-bold text-xs text-ink">
-                          {formatCurrency(det.amount)}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => openOverrideModal(det)}
-                        title="Modificar cálculo manualmente"
-                        className="p-1.5 rounded-lg border border-line hover:border-purple-500/40 hover:bg-purple-500/5 text-ink-muted hover:text-purple-600 transition"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
+                    <div className="border-l-0 border-line sm:border-l sm:pl-4">
+                      <p className="text-[10px] uppercase tracking-wide text-ink-muted">Base</p>
+                      <p className="num mt-0.5 text-xs font-semibold text-ink">{formatCurrency(det.taxable_base || det.taxableBase || defaultBase)}</p>
                     </div>
+                    <div className="border-l-0 border-line sm:border-l sm:pl-4">
+                      <p className="text-[10px] uppercase tracking-wide text-ink-muted">Valor retenido</p>
+                      <p className="num mt-0.5 text-sm font-semibold text-ink">{formatCurrency(det.amount)}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openOverrideModal(det)}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-md border border-line px-2.5 py-1.5 text-xs font-medium text-ink transition hover:border-brand/40 hover:text-brand"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                      Editar
+                    </button>
                   </div>
 
-                  {/* Explicación / Fundamento */}
-                  {det.explanation && (
-                    <div className="text-[11px] text-ink-muted bg-surface/80 p-2 rounded border border-line/60 flex items-start gap-1.5">
-                      <HelpCircle className="w-3.5 h-3.5 text-brand shrink-0 mt-0.5" />
-                      <span className="flex-1">{det.explanation}</span>
-                    </div>
-                  )}
-
-                  {det.override_reason && (
-                    <div className="text-[10px] text-purple-600 bg-purple-500/5 p-1.5 rounded border border-purple-500/20 font-medium">
-                      Justificación contable: {det.override_reason}
-                    </div>
+                  {(det.explanation || det.override_reason) && (
+                    <details className="mt-2 border-t border-line pt-2 text-[11px] text-ink-muted">
+                      <summary className="cursor-pointer font-medium text-ink-muted hover:text-ink">Ver fundamento y trazabilidad</summary>
+                      <div className="mt-1.5 space-y-1.5 leading-relaxed">
+                        {det.explanation && <p>{det.explanation}</p>}
+                        {det.override_reason && <p><span className="font-medium text-ink">Justificación contable:</span> {det.override_reason}</p>}
+                      </div>
+                    </details>
                   )}
                 </div>
               );
@@ -507,22 +489,23 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
           </div>
 
           {/* Resumen Totalizador */}
-          <div className="p-3.5 rounded-lg border border-line bg-surface flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex flex-col justify-between gap-3 rounded-lg border border-line bg-canvas/50 p-3.5 text-xs sm:flex-row sm:items-center">
             <div>
-              <span className="text-[11px] text-ink-muted block">Total Retenciones Practicadas</span>
-              <span className="num font-bold text-sm text-red-600">
+              <span className="block text-[11px] text-ink-muted">Total retenciones practicadas</span>
+              <span className="num text-sm font-bold text-ink">
                 - {formatCurrency(totalRetenciones)}
               </span>
             </div>
             <div className="sm:text-right">
-              <span className="text-[11px] text-ink-muted block">Neto Estimado a Girar / Cobrar</span>
-              <span className="num font-bold text-base text-brand">
+              <span className="block text-[11px] text-ink-muted">Neto estimado a girar / cobrar</span>
+              <span className="num text-base font-bold text-ink">
                 {formatCurrency(netoPagar)}
               </span>
             </div>
           </div>
         </div>
       )}
+      </div>
 
       {/* Modal Perfil RUT Tercero */}
       {showProfileModal && thirdPartyIdentifier && (
@@ -547,7 +530,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
           <div className="bg-surface border border-line rounded-card shadow-2xl max-w-md w-full p-6 space-y-4 text-ink">
             <div className="flex items-center justify-between pb-2 border-b border-line">
               <h3 className="font-semibold text-sm flex items-center gap-2">
-                <Edit3 className="w-4 h-4 text-purple-600" />
+                <Edit3 className="w-4 h-4 text-brand" />
                 Modificar Cálculo Manualmente
               </h3>
               <button
@@ -634,7 +617,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
                 <button
                   type="submit"
                   disabled={overrideSaving}
-                  className="px-4 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-medium hover:bg-purple-700 transition flex items-center gap-1.5 disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-lg bg-brand px-4 py-1.5 text-xs font-medium text-white transition hover:bg-brand-600 disabled:opacity-50"
                 >
                   {overrideSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                   <span>Guardar Ajuste Auditado</span>
