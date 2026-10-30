@@ -1026,6 +1026,43 @@ export async function buildServer(
   );
 
   app.patch(
+    '/api/companies/:companyId/accounting-accounts/toggle-all',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('integrations.configure')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { is_active, category } = req.body as { is_active: boolean; category?: string };
+
+      let query = db
+        .updateTable('accounting_accounts')
+        .set({ is_active, updated_at: new Date() })
+        .where('company_id', '=', companyId);
+
+      if (category && category !== 'ALL') {
+        if (category === 'EXPENSE') {
+          query = query.where((eb) =>
+            eb.or([
+              eb('code', 'like', '5%'),
+              eb('code', 'like', '6%'),
+              eb('code', 'like', '7%'),
+            ])
+          );
+        } else if (category === 'LIABILITY') {
+          query = query.where('code', 'like', '2%');
+        } else if (category === 'ASSET') {
+          query = query.where('code', 'like', '1%');
+        } else if (category === 'REVENUE') {
+          query = query.where('code', 'like', '4%');
+        }
+      }
+
+      await query.execute();
+      return { success: true };
+    },
+  );
+
+  app.patch(
     '/api/companies/:companyId/accounting-accounts/:id/toggle',
     {
       preHandler: [guards.requireCompany, guards.requirePermission('integrations.configure')],
@@ -1145,7 +1182,7 @@ export async function buildServer(
                 level: item.level,
                 category: item.category,
                 is_transactional: true,
-                is_active: true,
+                is_active: false,
               })
               .execute();
             inserted++;

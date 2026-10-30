@@ -795,6 +795,15 @@ export const api = {
     });
   },
 
+  toggleAllAccountingAccounts: (companyId: string | null | undefined, is_active: boolean, category?: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/accounting-accounts/toggle-all`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active, category }),
+    });
+  },
+
   syncAccountingAccountsFromSiigo: (companyId: string | null | undefined) => {
     const cId = resolveEffectiveCompanyId(companyId);
     return request<{ success: boolean; total_synced: number; inserted: number; updated: number }>(
