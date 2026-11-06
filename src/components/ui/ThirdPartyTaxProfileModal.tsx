@@ -55,6 +55,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [expenseAccount, setExpenseAccount] = useState<string>('');
   const [payableAccount, setPayableAccount] = useState<string>('');
   const [paymentAccount, setPaymentAccount] = useState<string>('');
+  const [ivaAccount, setIvaAccount] = useState<string>('');
   const [documentTypeId, setDocumentTypeId] = useState<number | null>(null);
   const [siigoDocTypes, setSiigoDocTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [accountingAccounts, setAccountingAccounts] = useState<Array<{ id: string; code: string; name: string; category: string | null; is_active?: boolean }>>([]);
@@ -114,6 +115,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setExpenseAccount(p.expense_account ?? '');
         setPayableAccount(p.payable_account ?? '');
         setPaymentAccount((p as any).payment_account ?? '');
+        setIvaAccount((p as any).iva_account ?? '');
         setDocumentTypeId(p.document_type_id ?? null);
         setSelectedRespIds(p.responsibilities.map((r) => r.id));
       } else {
@@ -126,6 +128,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setExpenseAccount('');
         setPayableAccount('');
         setPaymentAccount('');
+        setIvaAccount('');
         setDocumentTypeId(null);
         setSelectedRespIds([]);
       }
@@ -163,6 +166,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         expense_account: expenseAccount.trim() || null,
         payable_account: payableAccount.trim() || null,
         payment_account: paymentAccount.trim() || null,
+        iva_account: ivaAccount.trim() || null,
         document_type_id: documentTypeId,
         responsibility_ids: selectedRespIds,
       });
@@ -497,6 +501,29 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                     ))}
                   {paymentAccount && !accountingAccounts.some((a) => a.code === paymentAccount) && (
                     <option value={paymentAccount}>{paymentAccount} (Personalizada)</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  Cuenta IVA Descontable
+                </label>
+                <select
+                  value={ivaAccount || ''}
+                  onChange={(e) => setIvaAccount(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono truncate"
+                >
+                  <option value="">Por defecto de factura / compras (24081501 / 24081001)</option>
+                  {accountingAccounts
+                    .filter((a) => a.code.startsWith('2408'))
+                    .map((acc) => (
+                      <option key={acc.id} value={acc.code}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  {ivaAccount && !accountingAccounts.some((a) => a.code === ivaAccount) && (
+                    <option value={ivaAccount}>{ivaAccount} (Personalizada)</option>
                   )}
                 </select>
               </div>

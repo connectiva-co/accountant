@@ -400,6 +400,7 @@ export interface ThirdPartyTaxProfileDto {
   expense_account?: string | null;
   payable_account?: string | null;
   payment_account?: string | null;
+  iva_account?: string | null;
   document_type_id?: number | null;
   valid_from: string;
   valid_to: string;
@@ -420,6 +421,7 @@ export interface UpsertTaxProfileInput {
   expense_account?: string | null;
   payable_account?: string | null;
   payment_account?: string | null;
+  iva_account?: string | null;
   document_type_id?: number | null;
   responsibility_ids: string[];
   valid_from?: string;
@@ -1021,6 +1023,7 @@ export const api = {
       document_id: string;
       expense_account?: string | null;
       payment_account?: string | null;
+      iva_account?: string | null;
       taxes: Array<{
         tax_code: string;
         tax_name: string;
@@ -1037,6 +1040,16 @@ export const api = {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ payment_account }),
+      },
+    ),
+
+  updateDocumentIvaAccount: (companyId: string, documentId: string, iva_account: string | null) =>
+    request<{ success: boolean; iva_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/iva-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ iva_account }),
       },
     ),
 

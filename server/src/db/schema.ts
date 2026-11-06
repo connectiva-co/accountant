@@ -126,6 +126,7 @@ export interface DocumentsTable {
   superseded_at: TimestamptzNull;
   expense_account: string | null;
   payment_account: string | null;
+  iva_account: string | null;
   created_at: CreatedAt;
   updated_at: CreatedAt;
 }
@@ -624,6 +625,7 @@ export interface ThirdPartyTaxProfilesTable {
   expense_account: string | null;
   payable_account: string | null;
   payment_account: string | null;
+  iva_account: string | null;
   document_type_id: number | null;
   metadata: Generated<Json>;
   created_at: CreatedAt;

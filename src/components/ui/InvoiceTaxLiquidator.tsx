@@ -57,8 +57,10 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [selectedRentaConceptId, setSelectedRentaConceptId] = useState<string>('');
   const [selectedIcaConceptId, setSelectedIcaConceptId] = useState<string>('');
   const [documentPaymentAccount, setDocumentPaymentAccount] = useState<string>('');
+  const [documentIvaAccount, setDocumentIvaAccount] = useState<string>('');
   const [accountingAccounts, setAccountingAccounts] = useState<AccountingAccountDto[]>([]);
   const [savingPaymentAccount, setSavingPaymentAccount] = useState<boolean>(false);
+  const [savingIvaAccount, setSavingIvaAccount] = useState<boolean>(false);
 
   // Modales
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
@@ -130,6 +132,9 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       setAccountingAccounts(accountsRes.accounts);
       if (docTaxesRes.payment_account) {
         setDocumentPaymentAccount(docTaxesRes.payment_account);
+      }
+      if ((docTaxesRes as any).iva_account) {
+        setDocumentIvaAccount((docTaxesRes as any).iva_account);
       }
 
       // Mapear qué impuestos están habilitados para la empresa
@@ -255,6 +260,20 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       setError(err.message || 'Error guardando cuenta de tesorería de la factura');
     } finally {
       setSavingPaymentAccount(false);
+    }
+  };
+
+  const handleIvaAccountChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setDocumentIvaAccount(val);
+    if (!companyId || !documentId) return;
+    setSavingIvaAccount(true);
+    try {
+      await api.updateDocumentIvaAccount(companyId, documentId, val || null);
+    } catch (err: any) {
+      setError(err.message || 'Error guardando cuenta de IVA de la factura');
+    } finally {
+      setSavingIvaAccount(false);
     }
   };
 
@@ -482,6 +501,48 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
           {profile?.payment_account
             ? `Predeterminada para ${thirdPartyName || 'este tercero'}: ${profile.payment_account}. Especifica de qué cuenta bancaria o caja sale el dinero para el cruce de esta factura.`
             : 'Especifica de qué cuenta (Banco o Caja activa en el PUC) saldrá el dinero para el cruce contable posterior.'}
+        </span>
+      </div>
+
+      {/* Selector de Cuenta PUC de IVA Descontable para esta factura */}
+      <div className="rounded-lg border border-line bg-canvas/40 p-3">
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-[11px] font-semibold text-ink">
+            Cuenta Contable de IVA Descontable para esta Factura
+          </label>
+          {savingIvaAccount && (
+            <span className="text-[10px] text-ink-faint flex items-center gap-1">
+              <Loader2 className="w-2.5 h-2.5 animate-spin text-brand" /> Guardando...
+            </span>
+          )}
+        </div>
+        <select
+          value={documentIvaAccount || (profile as any)?.iva_account || ''}
+          onChange={handleIvaAccountChange}
+          disabled={loading || savingIvaAccount}
+          className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-xs text-ink focus:outline-none focus:border-brand font-mono font-medium truncate"
+        >
+          <option value="">
+            {(profile as any)?.iva_account
+              ? `Por defecto del tercero: ${(profile as any).iva_account}`
+              : '-- Por defecto: 24081501 (Servicios) / 24081001 (Compras) --'}
+          </option>
+          {accountingAccounts
+            .filter((a) => a.code.startsWith('2408'))
+            .map((acc) => (
+              <option key={acc.id} value={acc.code}>
+                {acc.code} - {acc.name}
+              </option>
+            ))}
+          {documentIvaAccount &&
+            !accountingAccounts.some((a) => a.code === documentIvaAccount) && (
+              <option value={documentIvaAccount}>
+                {documentIvaAccount} (Personalizada)
+              </option>
+            )}
+        </select>
+        <span className="text-[10px] text-ink-muted block mt-1">
+          Permite elegir a qué subcuenta de IVA (ej. 24081501 Servicios, 24081001 Compras 19%, 24081003 Compras 5%) se causará el IVA descontable en Siigo.
         </span>
       </div>
 
