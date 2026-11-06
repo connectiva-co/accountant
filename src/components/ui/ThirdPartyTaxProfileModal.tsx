@@ -57,6 +57,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [paymentAccount, setPaymentAccount] = useState<string>('');
   const [ivaAccount, setIvaAccount] = useState<string>('');
   const [documentTypeId, setDocumentTypeId] = useState<number | null>(null);
+  const [defaultRentaConceptId, setDefaultRentaConceptId] = useState<string>('');
+  const [defaultIcaConceptId, setDefaultIcaConceptId] = useState<string>('');
   const [siigoDocTypes, setSiigoDocTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
   const [accountingAccounts, setAccountingAccounts] = useState<Array<{ id: string; code: string; name: string; category: string | null; is_active?: boolean }>>([]);
   const [selectedRespIds, setSelectedRespIds] = useState<string[]>([]);
@@ -117,6 +119,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setPaymentAccount((p as any).payment_account ?? '');
         setIvaAccount((p as any).iva_account ?? '');
         setDocumentTypeId(p.document_type_id ?? null);
+        setDefaultRentaConceptId((p as any).default_renta_concept_id ?? '');
+        setDefaultIcaConceptId((p as any).default_ica_concept_id ?? '');
         setSelectedRespIds(p.responsibilities.map((r) => r.id));
       } else {
         const isNitJuridica = /^[89]/.test(thirdPartyIdentifier.replace(/\D/g, ''));
@@ -130,6 +134,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setPaymentAccount('');
         setIvaAccount('');
         setDocumentTypeId(null);
+        setDefaultRentaConceptId('');
+        setDefaultIcaConceptId('');
         setSelectedRespIds([]);
       }
     } catch (err: any) {
@@ -168,6 +174,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         payment_account: paymentAccount.trim() || null,
         iva_account: ivaAccount.trim() || null,
         document_type_id: documentTypeId,
+        default_renta_concept_id: defaultRentaConceptId || null,
+        default_ica_concept_id: defaultIcaConceptId || null,
         responsibility_ids: selectedRespIds,
       });
 
@@ -544,6 +552,57 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                     </option>
                   ))}
                 </select>
+              </div>
+            </div>
+
+            {/* Conceptos de Retención Predeterminados para este Tercero */}
+            <div className="p-3 rounded-lg border border-line bg-canvas/40 space-y-3">
+              <label className="block text-xs font-semibold text-ink">
+                Conceptos de Retención Predeterminados (RUT)
+              </label>
+              <p className="text-[11px] text-ink-muted">
+                Se aplicarán automáticamente a todas las facturas de este tercero sin tener que seleccionarlos una por una.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-ink-muted mb-1">
+                    Concepto Retención en la Fuente Predeterminado
+                  </label>
+                  <select
+                    value={defaultRentaConceptId}
+                    onChange={(e) => setDefaultRentaConceptId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-medium truncate"
+                  >
+                    <option value="">-- No aplicar / Sin concepto predeterminado --</option>
+                    {concepts
+                      .filter((c) => c.tax_type_code === 'RENTA_RETE')
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-ink-muted mb-1">
+                    Concepto Retención ICA Predeterminado
+                  </label>
+                  <select
+                    value={defaultIcaConceptId}
+                    onChange={(e) => setDefaultIcaConceptId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-medium truncate"
+                  >
+                    <option value="">-- No aplicar / Sin concepto predeterminado --</option>
+                    {concepts
+                      .filter((c) => c.tax_type_code === 'ICA_RETE')
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                  </select>
+                </div>
               </div>
             </div>
 

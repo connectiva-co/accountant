@@ -402,6 +402,8 @@ export interface ThirdPartyTaxProfileDto {
   payment_account?: string | null;
   iva_account?: string | null;
   document_type_id?: number | null;
+  default_renta_concept_id?: string | null;
+  default_ica_concept_id?: string | null;
   valid_from: string;
   valid_to: string;
   responsibilities: Array<{
@@ -423,6 +425,8 @@ export interface UpsertTaxProfileInput {
   payment_account?: string | null;
   iva_account?: string | null;
   document_type_id?: number | null;
+  default_renta_concept_id?: string | null;
+  default_ica_concept_id?: string | null;
   responsibility_ids: string[];
   valid_from?: string;
   valid_to?: string;

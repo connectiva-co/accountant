@@ -1395,6 +1395,10 @@ export async function buildServer(
             );
           }
           if (det.tax_type_code.includes('RENTA')) {
+            // Caso Arrendamientos (236530): en Siigo está parametrizado con tax 21285 ("Retefuente 3.5% Arriendos")
+            if (accountCode.startsWith('236530')) {
+              return st.id === 21285;
+            }
             return st.type === 'Retefuente' && (
               Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1
             );
@@ -1418,10 +1422,15 @@ export async function buildServer(
           value: amount,
         };
 
-        // Si la cuenta contable en Siigo es genérica (ej. 23657003 "Otras retenciones y patrimonios" o 23659901),
+        // Si la cuenta contable en Siigo es genérica (ej. 23657003, 23652509, 23659901),
         // Siigo NO admite amarrar un objeto "tax" y rechaza con error account_settings.
         // Solo las subcuentas tarifarias específicas (ej. 23654001, 23652503, 23680505) tienen impuesto asociado en Siigo.
-        const isGenericTaxAccount = accountCode === '23657003' || accountCode === '23659901' || accountCode === '23657501';
+        const isGenericTaxAccount =
+          accountCode === '23657003' ||
+          accountCode === '23659901' ||
+          accountCode === '23657501' ||
+          accountCode.endsWith('09') ||
+          accountCode.endsWith('99');
 
         if (matchedTax && !isGenericTaxAccount) {
           retItem.tax = { id: matchedTax.id };
@@ -1532,14 +1541,54 @@ export async function buildServer(
         },
       });
 
-      // 7. Enviar a Siigo mediante Journals (Comprobante Contable)
+      // 7. Enviar a Siigo mediante Journals (Comprobante Contable) con auto-reintento inteligente
       try {
-        const journal = await siigoClient.journals.create({
-          document: { id: documentTypeId },
-          date: docDate,
-          items,
-          observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
-        });
+        let journal: any;
+        try {
+          journal = await siigoClient.journals.create({
+            document: { id: documentTypeId },
+            date: docDate,
+            items,
+            observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
+          });
+        } catch (firstErr: any) {
+          // Si Siigo rechaza con account_settings o tax_settings en items[X],
+          // significa que la cuenta no soporta el tax adjunto o el id de impuesto no corresponde a esa cuenta.
+          const rawErrors = firstErr?.rawBody?.Errors || firstErr?.errors || [];
+          const rejectedItemIndices = new Set<number>();
+
+          for (const errItem of rawErrors) {
+            if (errItem.Code === 'account_settings' || errItem.Code === 'tax_settings') {
+              for (const param of errItem.Params || []) {
+                const match = param.match(/^items\[(\d+)\]/);
+                if (match) {
+                  rejectedItemIndices.add(Number(match[1]));
+                }
+              }
+            }
+          }
+
+          if (rejectedItemIndices.size > 0) {
+            req.log.warn(
+              { rejectedItemIndices: Array.from(rejectedItemIndices) },
+              'Siigo rechazó el impuesto en ciertas cuentas (account_settings/tax_settings). Reintentando sin objeto tax...',
+            );
+            // Remover tax de los ítems conflictivos y reintentar
+            for (const idx of rejectedItemIndices) {
+              if (items[idx]?.tax) {
+                delete items[idx].tax;
+              }
+            }
+            journal = await siigoClient.journals.create({
+              document: { id: documentTypeId },
+              date: docDate,
+              items,
+              observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
+            });
+          } else {
+            throw firstErr;
+          }
+        }
 
         // 8. Guardar match y actualizar estado
         const chosen = await pickIntegration(companyId, 'SIIGO');

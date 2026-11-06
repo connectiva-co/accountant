@@ -627,6 +627,8 @@ export interface ThirdPartyTaxProfilesTable {
   payment_account: string | null;
   iva_account: string | null;
   document_type_id: number | null;
+  default_renta_concept_id: string | null;
+  default_ica_concept_id: string | null;
   metadata: Generated<Json>;
   created_at: CreatedAt;
   updated_at: Timestamptz;

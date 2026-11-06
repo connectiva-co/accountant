@@ -176,9 +176,19 @@ export class TaxEngine {
       .execute();
 
     // Mapa de conceptos seleccionados manualmente / overrides
+    // Si viene explícitamente "" o "NONE" significa "No aplicar / Desactivar retención para esta factura"
     const effectiveConcepts = { ...conceptOverrides };
-    if (rentaConceptId) effectiveConcepts['RENTA_RETE'] = rentaConceptId;
-    if (icaConceptId) effectiveConcepts['ICA_RETE'] = icaConceptId;
+    if (rentaConceptId !== undefined) {
+      effectiveConcepts['RENTA_RETE'] = rentaConceptId ?? 'NONE';
+    } else if (profile?.default_renta_concept_id) {
+      effectiveConcepts['RENTA_RETE'] = profile.default_renta_concept_id;
+    }
+
+    if (icaConceptId !== undefined) {
+      effectiveConcepts['ICA_RETE'] = icaConceptId ?? 'NONE';
+    } else if (profile?.default_ica_concept_id) {
+      effectiveConcepts['ICA_RETE'] = profile.default_ica_concept_id;
+    }
 
     // Obtener catálogo de conceptos
     const allConcepts = await db.selectFrom('tax_concepts').selectAll().execute();
@@ -211,6 +221,31 @@ export class TaxEngine {
     for (const taxTypeId of relevantTaxTypeIds) {
       const taxType = allTaxTypes.find((t) => t.id === taxTypeId);
       if (!taxType) continue;
+
+      const overriddenConcept = effectiveConcepts[taxType.id] ?? effectiveConcepts[taxType.code];
+
+      // Si el usuario seleccionó explícitamente "No aplicar" para esta factura
+      if (overriddenConcept === 'NONE' || overriddenConcept === '') {
+        results.push({
+          taxTypeId: taxType.id,
+          taxTypeCode: taxType.code,
+          taxTypeName: taxType.name,
+          taxConceptId: null,
+          taxConceptCode: null,
+          taxConceptName: null,
+          taxRuleId: null,
+          taxableBase,
+          rate: 0,
+          amount: 0,
+          status: 'EXEMPT',
+          source: 'ENGINE',
+          explanation: 'Desactivado manualmente para esta factura (No aplicar retención).',
+          legalReference: 'Ajuste en Factura',
+          profileSnapshot,
+          ruleSnapshot: {},
+        });
+        continue;
+      }
 
       // A. ¿Tiene regla específica el tercero?
       const tpRule = thirdPartyRules.find((r) => r.tax_type_id === taxTypeId);
