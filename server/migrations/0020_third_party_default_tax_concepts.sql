@@ -4,3 +4,4 @@
 ALTER TABLE third_party_tax_profiles
   ADD COLUMN IF NOT EXISTS default_renta_concept_id uuid REFERENCES tax_concepts(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS default_ica_concept_id uuid REFERENCES tax_concepts(id) ON DELETE SET NULL;
+

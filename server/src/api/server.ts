@@ -1642,6 +1642,53 @@ export async function buildServer(
     },
   );
 
+  /* ---------------------------------------------------------------- */
+  /* Consulta de Elegibles para Sincronización Masiva a Siigo         */
+  /* ---------------------------------------------------------------- */
+  app.get(
+    '/api/companies/:companyId/sync-to-siigo/eligible',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+
+      const query = db
+        .selectFrom('documents as d')
+        .innerJoin('third_parties as issuer', 'issuer.id', 'd.issuer_id')
+        .innerJoin('third_party_tax_profiles as tp', 'tp.third_party_id', 'd.issuer_id')
+        .leftJoin('document_integration_matches as dim', (join) =>
+          join
+            .onRef('dim.document_id', '=', 'd.id')
+            .on('dim.match_status', '=', 'MATCHED')
+        )
+        .select([
+          'd.id',
+          'd.prefix',
+          'd.folio',
+          'd.issued_at',
+          'd.total',
+          'issuer.tax_id as issuer_nit',
+          'issuer.legal_name as issuer_name',
+          'd.expense_account as doc_expense_account',
+          'tp.expense_account as tp_expense_account',
+        ])
+        .where('d.company_id', '=', companyId)
+        .where('d.direction', '=', 'RECEIVED')
+        .where('dim.id', 'is', null)
+        .where((eb) =>
+          eb.or([
+            eb('d.expense_account', 'is not', null),
+            eb('tp.expense_account', 'is not', null),
+          ])
+        )
+        .orderBy('d.issued_at', 'asc');
+
+      const documents = await query.execute();
+      return { count: documents.length, documents };
+    },
+  );
+
 
   /* ---------------------------------------------------------------- */
   /* Impuestos y Retenciones del Documento                            */

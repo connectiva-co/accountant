@@ -1007,6 +1007,13 @@ export const api = {
     );
   },
 
+  getEligibleSyncToSiigo: (companyId: string | null | undefined) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ count: number; documents: any[] }>(
+      `/api/companies/${cId}/sync-to-siigo/eligible`
+    );
+  },
+
   overrideDocumentTax: (
     companyId: string | null | undefined,
     documentId: string,
