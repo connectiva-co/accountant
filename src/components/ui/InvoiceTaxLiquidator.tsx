@@ -53,12 +53,14 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [determinations, setDeterminations] = useState<TaxDeterminationDto[]>([]);
   const [companyConfigs, setCompanyConfigs] = useState<Record<string, boolean>>({});
 
-  // Selección de conceptos y cuenta PUC de tesorería/pago
+  // Selección de conceptos y cuentas PUC para esta factura
   const [selectedRentaConceptId, setSelectedRentaConceptId] = useState<string>('');
   const [selectedIcaConceptId, setSelectedIcaConceptId] = useState<string>('');
+  const [documentExpenseAccount, setDocumentExpenseAccount] = useState<string>('');
   const [documentPaymentAccount, setDocumentPaymentAccount] = useState<string>('');
   const [documentIvaAccount, setDocumentIvaAccount] = useState<string>('');
   const [accountingAccounts, setAccountingAccounts] = useState<AccountingAccountDto[]>([]);
+  const [savingExpenseAccount, setSavingExpenseAccount] = useState<boolean>(false);
   const [savingPaymentAccount, setSavingPaymentAccount] = useState<boolean>(false);
   const [savingIvaAccount, setSavingIvaAccount] = useState<boolean>(false);
 
@@ -68,6 +70,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [overrideRate, setOverrideRate] = useState<string>('');
   const [overrideAmount, setOverrideAmount] = useState<string>('');
   const [overrideReason, setOverrideReason] = useState<string>('');
+  const [overrideAccount, setOverrideAccount] = useState<string>('');
   const [overrideSaving, setOverrideSaving] = useState<boolean>(false);
   const [overrideError, setOverrideError] = useState<string | null>(null);
   const [showConcepts, setShowConcepts] = useState<boolean>(false);
@@ -130,6 +133,9 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       setConcepts(conceptsRes.concepts);
       setDeterminations(detRes.determinations);
       setAccountingAccounts(accountsRes.accounts);
+      if (docTaxesRes.expense_account) {
+        setDocumentExpenseAccount(docTaxesRes.expense_account);
+      }
       if (docTaxesRes.payment_account) {
         setDocumentPaymentAccount(docTaxesRes.payment_account);
       }
@@ -202,6 +208,7 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
     setOverrideRate(String(det.rate * (isIca ? 1000 : 100)));
     setOverrideAmount(String(det.amount));
     setOverrideReason(det.override_reason || det.overrideReason || '');
+    setOverrideAccount(det.accounting_account || '');
     setOverrideError(null);
   };
 
@@ -212,11 +219,6 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
 
     const taxTypeId = overrideTarget.tax_type_id || overrideTarget.taxTypeId;
     if (!taxTypeId) return;
-
-    if (!overrideReason.trim() || overrideReason.trim().length < 5) {
-      setOverrideError('Debe ingresar una justificación contable de al menos 5 caracteres.');
-      return;
-    }
 
     setOverrideSaving(true);
     setOverrideError(null);
@@ -230,13 +232,14 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
         tax_type_id: taxTypeId,
         override_rate: isNaN(rateNum) ? 0 : rateNum,
         override_amount: isNaN(amountNum) ? 0 : amountNum,
-        reason: overrideReason.trim(),
+        reason: overrideReason.trim() || 'Ajuste manual de tarifa / cuenta contable',
+        accounting_account: overrideAccount.trim() || null,
       });
 
       setDeterminations((prev) =>
         prev.map((d) => {
           const matchId = d.tax_type_id || d.taxTypeId;
-          return matchId === taxTypeId ? { ...d, ...res.determination } : d;
+          return matchId === taxTypeId ? { ...d, ...res.determination, accounting_account: overrideAccount.trim() || null } : d;
         })
       );
 
@@ -246,6 +249,20 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       setOverrideError(err.message || 'Error aplicando ajuste manual');
     } finally {
       setOverrideSaving(false);
+    }
+  };
+
+  const handleExpenseAccountChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setDocumentExpenseAccount(val);
+    if (!companyId || !documentId) return;
+    setSavingExpenseAccount(true);
+    try {
+      await api.updateDocumentExpenseAccount(companyId, documentId, val || null);
+    } catch (err: any) {
+      setError(err.message || 'Error guardando cuenta de gasto/costo de la factura');
+    } finally {
+      setSavingExpenseAccount(false);
     }
   };
 
@@ -459,6 +476,50 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
         )}
       </div>
       )}
+
+      {/* Selector de Cuenta PUC (Gasto / Costo) para esta factura */}
+      <div className="rounded-lg border border-line bg-canvas/40 p-3">
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-[11px] font-semibold text-ink">
+            Cuenta Contable de Gasto / Costo para esta Factura
+          </label>
+          {savingExpenseAccount && (
+            <span className="text-[10px] text-ink-faint flex items-center gap-1">
+              <Loader2 className="w-2.5 h-2.5 animate-spin text-brand" /> Guardando...
+            </span>
+          )}
+        </div>
+        <select
+          value={documentExpenseAccount || profile?.expense_account || ''}
+          onChange={handleExpenseAccountChange}
+          disabled={loading || savingExpenseAccount}
+          className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-xs text-ink focus:outline-none focus:border-brand font-mono font-medium truncate"
+        >
+          <option value="">
+            {profile?.expense_account
+              ? `Por defecto del tercero: ${profile.expense_account}`
+              : '-- Seleccionar cuenta contable de Gasto o Costo (51, 52, 14, etc.) --'}
+          </option>
+          {accountingAccounts
+            .filter((a) => a.code.startsWith('5') || a.code.startsWith('6') || a.code.startsWith('14') || a.code.startsWith('15'))
+            .map((acc) => (
+              <option key={acc.id} value={acc.code}>
+                {acc.code} - {acc.name}
+              </option>
+            ))}
+          {documentExpenseAccount &&
+            !accountingAccounts.some((a) => a.code === documentExpenseAccount) && (
+              <option value={documentExpenseAccount}>
+                {documentExpenseAccount} (Personalizada)
+              </option>
+            )}
+        </select>
+        <span className="text-[10px] text-ink-muted block mt-1">
+          {profile?.expense_account
+            ? `Predeterminada para ${thirdPartyName || 'este tercero'}: ${profile.expense_account}. Puedes seleccionar una subcuenta de gasto específica para esta factura.`
+            : 'Especifica a qué cuenta de gasto o contrapartida se contabilizará esta factura en Siigo.'}
+        </span>
+      </div>
 
       {/* Selector de Cuenta PUC (Origen del dinero / Tesorería / Cruce) para esta factura */}
       <div className="rounded-lg border border-line bg-canvas/40 p-3">
@@ -722,15 +783,40 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
 
               <div>
                 <label className="block text-[11px] font-medium text-ink-muted mb-1">
-                  Justificación Contable (Obligatorio)
+                  Cuenta Contable Siigo para esta Retención
+                </label>
+                <select
+                  value={overrideAccount}
+                  onChange={(e) => setOverrideAccount(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs font-mono"
+                >
+                  <option value="">Por defecto / Calculada automáticamente</option>
+                  {accountingAccounts
+                    .filter((a) => a.code.startsWith('2365') || a.code.startsWith('2367') || a.code.startsWith('2368') || a.code.startsWith('1355'))
+                    .map((acc) => (
+                      <option key={acc.id} value={acc.code}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  {overrideAccount && !accountingAccounts.some((a) => a.code === overrideAccount) && (
+                    <option value={overrideAccount}>{overrideAccount} (Personalizada)</option>
+                  )}
+                </select>
+                <span className="text-[10px] text-ink-muted block mt-0.5">
+                  Permite elegir específicamente la cuenta (ej. 23657003, 23654001, 23652503) para esta factura.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-medium text-ink-muted mb-1">
+                  Justificación Contable
                 </label>
                 <textarea
-                  rows={3}
+                  rows={2}
                   value={overrideReason}
                   onChange={(e) => setOverrideReason(e.target.value)}
-                  placeholder="Ej: Proveedor presentó resolución de no sujeción radicada el 15 de marzo..."
+                  placeholder="Ej: Cambio de cuenta contable por acuerdo específico de tercero..."
                   className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs placeholder:text-ink-muted/50 focus:outline-none focus:border-brand"
-                  required
                 />
               </div>
 

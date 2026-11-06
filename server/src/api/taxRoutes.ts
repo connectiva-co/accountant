@@ -97,7 +97,8 @@ const overrideBodySchema = z.object({
   tax_type_id: z.string().uuid(),
   override_rate: z.number().min(0).max(1),
   override_amount: z.number().min(0),
-  reason: z.string().min(5).max(500),
+  reason: z.string().min(3).max(500),
+  accounting_account: z.string().max(30).optional().nullable(),
 });
 
 export function registerTaxRoutes(
@@ -510,6 +511,7 @@ export function registerTaxRoutes(
         overrideRate: body.override_rate,
         overrideAmount: body.override_amount,
         reason: body.reason,
+        accountingAccount: body.accounting_account,
         userId: user.id,
       });
 

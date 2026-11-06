@@ -679,6 +679,7 @@ export interface DocumentTaxDeterminationsTable {
   override_reason: string | null;
   override_rate: number | null;
   override_amount: number | null;
+  accounting_account: string | null;
   calculated_by: string | null;
   calculated_at: Timestamptz;
 }

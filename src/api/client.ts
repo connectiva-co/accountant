@@ -481,6 +481,7 @@ export interface TaxDeterminationDto {
   overrideReason?: string | null;
   override_rate?: number | null;
   override_amount?: number | null;
+  accounting_account?: string | null;
   profileSnapshot?: Record<string, unknown>;
   ruleSnapshot?: Record<string, unknown>;
 }
@@ -1005,7 +1006,13 @@ export const api = {
   overrideDocumentTax: (
     companyId: string | null | undefined,
     documentId: string,
-    input: { tax_type_id: string; override_rate: number; override_amount: number; reason: string }
+    input: {
+      tax_type_id: string;
+      override_rate: number;
+      override_amount: number;
+      reason: string;
+      accounting_account?: string | null;
+    }
   ) => {
     const cId = resolveEffectiveCompanyId(companyId);
     return request<{ determination: TaxDeterminationDto }>(

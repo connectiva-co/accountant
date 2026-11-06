@@ -509,13 +509,14 @@ export class TaxEngine {
       overrideRate: number;
       overrideAmount: number;
       reason: string;
+      accountingAccount?: string | null;
       userId: string;
     }
   ): Promise<TaxDeterminationResult> {
-    const { companyId, documentId, taxTypeId, overrideRate, overrideAmount, reason, userId } = input;
+    const { companyId, documentId, taxTypeId, overrideRate, overrideAmount, reason, accountingAccount, userId } = input;
 
-    if (!reason || reason.trim().length < 5) {
-      throw new Error('La justificación del ajuste manual es obligatoria y debe tener al menos 5 caracteres.');
+    if (!reason || reason.trim().length < 2) {
+      throw new Error('La justificación del ajuste manual es obligatoria.');
     }
 
     const existing = await db
@@ -540,6 +541,7 @@ export class TaxEngine {
         override_reason: reason.trim(),
         override_rate: overrideRate,
         override_amount: overrideAmount,
+        accounting_account: accountingAccount !== undefined ? (accountingAccount?.trim() || null) : existing.accounting_account,
         explanation: `Ajuste manual del contador: "${reason.trim()}". Tarifa anterior: ${existing.rate}, Importe anterior: ${existing.amount}.`,
         calculated_by: userId,
         calculated_at: new Date(),

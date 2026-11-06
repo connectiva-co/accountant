@@ -41,6 +41,7 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
 
   const [syncingToSiigo, setSyncingToSiigo] = useState(false);
   const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [isSynced, setIsSynced] = useState<boolean>(document.match_status === 'MATCHED');
 
   const handleSyncToSiigo = async () => {
     if (!document.id || !effectiveCompanyId) return;
@@ -52,6 +53,7 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
         success: true,
         message: `Comprobante creado exitosamente en Siigo: #${res.number || res.external_id || 'OK'}`,
       });
+      setIsSynced(true);
       if (onTaxesSaved) {
         onTaxesSaved();
       }
@@ -516,7 +518,7 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
               onClick={handleSyncToSiigo}
               disabled={syncingToSiigo}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer text-white shadow-xs ${
-                document.match_status === 'MATCHED'
+                isSynced || document.match_status === 'MATCHED'
                   ? 'bg-blue-600 hover:bg-blue-700'
                   : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
@@ -524,7 +526,7 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
               {syncingToSiigo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
               {syncingToSiigo
                 ? 'Subiendo a Siigo...'
-                : document.match_status === 'MATCHED'
+                : isSynced || document.match_status === 'MATCHED'
                 ? 'Re-sincronizar en Siigo'
                 : 'Subir a Siigo (Comprobante)'}
             </button>

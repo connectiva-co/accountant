@@ -238,31 +238,31 @@ export async function buildServer(
     async (req) => {
       const q = parseQuery(companyQuery, req.query);
       if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      let query = db
-        .selectFrom('imports')
-        .leftJoin('companies', 'companies.id', 'imports.company_id')
-        .select([
-          'imports.id as id',
-          'imports.filename as filename',
-          'imports.source as source',
-          'imports.status as status',
-          'imports.started_at as started_at',
-          'imports.completed_at as completed_at',
-          'imports.rows_total as rows_total',
-          'imports.rows_inserted as rows_inserted',
-          'imports.rows_updated as rows_updated',
-          'imports.rows_unchanged as rows_unchanged',
-          'imports.rows_rejected as rows_rejected',
-          'imports.warnings_count as warnings_count',
-          'imports.error_message as error_message',
-          'companies.nit as company_nit',
-          'companies.legal_name as company_name',
-        ])
-        .orderBy('imports.started_at', 'desc')
-        .limit(100);
-      query = query.where('imports.company_id', '=', q.company_id);
-      return { imports: await query.execute() };
-    });
+    let query = db
+      .selectFrom('imports')
+      .leftJoin('companies', 'companies.id', 'imports.company_id')
+      .select([
+        'imports.id as id',
+        'imports.filename as filename',
+        'imports.source as source',
+        'imports.status as status',
+        'imports.started_at as started_at',
+        'imports.completed_at as completed_at',
+        'imports.rows_total as rows_total',
+        'imports.rows_inserted as rows_inserted',
+        'imports.rows_updated as rows_updated',
+        'imports.rows_unchanged as rows_unchanged',
+        'imports.rows_rejected as rows_rejected',
+        'imports.warnings_count as warnings_count',
+        'imports.error_message as error_message',
+        'companies.nit as company_nit',
+        'companies.legal_name as company_name',
+      ])
+      .orderBy('imports.started_at', 'desc')
+      .limit(100);
+    query = query.where('imports.company_id', '=', q.company_id);
+    return { imports: await query.execute() };
+  });
 
   app.post(
     '/api/imports',
@@ -323,39 +323,39 @@ export async function buildServer(
     '/api/imports/:id',
     { preHandler: [guards.requireCompany, guards.requirePermission('radian.read')] },
     async (req) => {
-      const { id } = req.params as { id: string };
-      const q = parseQuery(companyQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      const row = await db
-        .selectFrom('imports')
-        .selectAll()
-        .where('id', '=', id)
-        .where('company_id', '=', q.company_id)
-        .executeTakeFirst();
-      if (!row) throw new HttpError(404, 'NO_ENCONTRADA', 'Importación no encontrada.');
+    const { id } = req.params as { id: string };
+    const q = parseQuery(companyQuery, req.query);
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    const row = await db
+      .selectFrom('imports')
+      .selectAll()
+      .where('id', '=', id)
+      .where('company_id', '=', q.company_id)
+      .executeTakeFirst();
+    if (!row) throw new HttpError(404, 'NO_ENCONTRADA', 'Importación no encontrada.');
 
-      const rows = await db
-        .selectFrom('import_rows')
-        .select(['processing_status', (eb) => eb.fn.countAll<number>().as('count')])
-        .where('import_id', '=', id)
-        .groupBy('processing_status')
-        .execute();
+    const rows = await db
+      .selectFrom('import_rows')
+      .select(['processing_status', (eb) => eb.fn.countAll<number>().as('count')])
+      .where('import_id', '=', id)
+      .groupBy('processing_status')
+      .execute();
 
-      const rejected = await db
-        .selectFrom('import_rows')
-        .select(['row_number', 'error_code', 'error_message'])
-        .where('import_id', '=', id)
-        .where('processing_status', '=', 'REJECTED')
-        .orderBy('row_number')
-        .limit(100)
-        .execute();
+    const rejected = await db
+      .selectFrom('import_rows')
+      .select(['row_number', 'error_code', 'error_message'])
+      .where('import_id', '=', id)
+      .where('processing_status', '=', 'REJECTED')
+      .orderBy('row_number')
+      .limit(100)
+      .execute();
 
-      return {
-        import: row,
-        byStatus: rows.map((r) => ({ status: r.processing_status, count: Number(r.count) })),
-        rejected,
-      };
-    });
+    return {
+      import: row,
+      byStatus: rows.map((r) => ({ status: r.processing_status, count: Number(r.count) })),
+      rejected,
+    };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Documentos                                                        */
@@ -366,131 +366,131 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
     async (req) => {
       const q = parseQuery(documentsQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
 
-      let base = db
-        .selectFrom('documents')
-        .innerJoin('document_types', 'document_types.id', 'documents.document_type_id')
-        .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
-        .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
-        .where('documents.company_id', '=', q.company_id)
-        .where('documents.is_active', '=', true);
+    let base = db
+      .selectFrom('documents')
+      .innerJoin('document_types', 'document_types.id', 'documents.document_type_id')
+      .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
+      .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
+      .where('documents.company_id', '=', q.company_id)
+      .where('documents.is_active', '=', true);
 
-      if (q.from) base = base.where('documents.issued_at', '>=', q.from);
-      if (q.to) base = base.where('documents.issued_at', '<=', q.to);
-      if (q.direction) base = base.where('documents.direction', '=', q.direction);
-      if (q.category) base = base.where('document_types.category', '=', q.category);
-      if (q.search) {
-        const like = `%${q.search}%`;
-        base = base.where((eb) =>
-          eb.or([
-            eb('documents.external_uid', 'like', like),
-            eb('documents.folio', 'like', like),
-            eb('documents.status', 'like', like),
-            eb('issuer.legal_name', 'like', like),
-            eb('receiver.legal_name', 'like', like),
-            eb('issuer.tax_id', 'like', like),
-            eb('receiver.tax_id', 'like', like),
-          ]),
-        );
-      }
+    if (q.from) base = base.where('documents.issued_at', '>=', q.from);
+    if (q.to) base = base.where('documents.issued_at', '<=', q.to);
+    if (q.direction) base = base.where('documents.direction', '=', q.direction);
+    if (q.category) base = base.where('document_types.category', '=', q.category);
+    if (q.search) {
+      const like = `%${q.search}%`;
+      base = base.where((eb) =>
+        eb.or([
+          eb('documents.external_uid', 'like', like),
+          eb('documents.folio', 'like', like),
+          eb('documents.status', 'like', like),
+          eb('issuer.legal_name', 'like', like),
+          eb('receiver.legal_name', 'like', like),
+          eb('issuer.tax_id', 'like', like),
+          eb('receiver.tax_id', 'like', like),
+        ]),
+      );
+    }
 
-      const totalRow = await base.select((eb) => eb.fn.countAll<number>().as('count')).executeTakeFirst();
-      const rows = await base
-        .select([
-          'documents.id as id',
-          'documents.external_uid as external_uid',
-          'documents.issued_at as issued_at',
-          'documents.total as total',
-          'documents.direction as direction',
-          'documents.status as status',
-          'documents.folio as folio',
-          'documents.prefix as prefix',
-          'document_types.name as type_name',
-          'document_types.code as type_code',
-          'document_types.category as category',
-          'issuer.tax_id as issuer_tax_id',
-          'issuer.legal_name as issuer_name',
-          'receiver.tax_id as receiver_tax_id',
-          'receiver.legal_name as receiver_name',
-        ])
-        .orderBy('documents.issued_at', 'desc')
-        .limit(q.limit)
-        .offset(q.offset)
-        .execute();
+    const totalRow = await base.select((eb) => eb.fn.countAll<number>().as('count')).executeTakeFirst();
+    const rows = await base
+      .select([
+        'documents.id as id',
+        'documents.external_uid as external_uid',
+        'documents.issued_at as issued_at',
+        'documents.total as total',
+        'documents.direction as direction',
+        'documents.status as status',
+        'documents.folio as folio',
+        'documents.prefix as prefix',
+        'document_types.name as type_name',
+        'document_types.code as type_code',
+        'document_types.category as category',
+        'issuer.tax_id as issuer_tax_id',
+        'issuer.legal_name as issuer_name',
+        'receiver.tax_id as receiver_tax_id',
+        'receiver.legal_name as receiver_name',
+      ])
+      .orderBy('documents.issued_at', 'desc')
+      .limit(q.limit)
+      .offset(q.offset)
+      .execute();
 
-      return { total: Number(totalRow?.count ?? 0), documents: rows };
-    });
+    return { total: Number(totalRow?.count ?? 0), documents: rows };
+  });
 
   app.get(
     '/api/documents/:id',
     { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
     async (req) => {
       const { id } = req.params as { id: string };
-      const q = parseQuery(companyQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      const doc = await db
-        .selectFrom('documents')
-        .innerJoin('document_types', 'document_types.id', 'documents.document_type_id')
-        .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
-        .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
-        .selectAll('documents')
+    const q = parseQuery(companyQuery, req.query);
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    const doc = await db
+      .selectFrom('documents')
+      .innerJoin('document_types', 'document_types.id', 'documents.document_type_id')
+      .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
+      .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
+      .selectAll('documents')
+      .select([
+        'document_types.name as type_name',
+        'document_types.code as type_code',
+        'document_types.category as category',
+        'issuer.tax_id as issuer_tax_id',
+        'issuer.legal_name as issuer_name',
+        'receiver.tax_id as receiver_tax_id',
+        'receiver.legal_name as receiver_name',
+      ])
+      .where('documents.id', '=', id)
+      .where('documents.company_id', '=', q.company_id)
+      .executeTakeFirst();
+    if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+    const [taxes, versions, history, issues, events] = await Promise.all([
+      db
+        .selectFrom('document_taxes')
+        .innerJoin('tax_types', 'tax_types.id', 'document_taxes.tax_type_id')
         .select([
-          'document_types.name as type_name',
-          'document_types.code as type_code',
-          'document_types.category as category',
-          'issuer.tax_id as issuer_tax_id',
-          'issuer.legal_name as issuer_name',
-          'receiver.tax_id as receiver_tax_id',
-          'receiver.legal_name as receiver_name',
+          'tax_types.code as code',
+          'tax_types.name as name',
+          'tax_types.category as category',
+          'document_taxes.amount as amount',
+          'document_taxes.taxable_base as taxable_base',
+          'document_taxes.rate as rate',
         ])
-        .where('documents.id', '=', id)
-        .where('documents.company_id', '=', q.company_id)
-        .executeTakeFirst();
-      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+        .where('document_taxes.document_id', '=', id)
+        .execute(),
+      db
+        .selectFrom('document_versions')
+        .select(['id', 'version_number', 'source_hash', 'created_at', 'import_id'])
+        .where('document_id', '=', id)
+        .orderBy('version_number', 'desc')
+        .execute(),
+      db
+        .selectFrom('document_status_history')
+        .select(['status', 'observed_at', 'import_id'])
+        .where('document_id', '=', id)
+        .orderBy('observed_at', 'asc')
+        .execute(),
+      db
+        .selectFrom('validation_issues')
+        .selectAll()
+        .where('document_id', '=', id)
+        .orderBy('created_at', 'desc')
+        .execute(),
+      db
+        .selectFrom('document_events')
+        .selectAll()
+        .where('document_id', '=', id)
+        .orderBy('occurred_at', 'desc')
+        .execute(),
+    ]);
 
-      const [taxes, versions, history, issues, events] = await Promise.all([
-        db
-          .selectFrom('document_taxes')
-          .innerJoin('tax_types', 'tax_types.id', 'document_taxes.tax_type_id')
-          .select([
-            'tax_types.code as code',
-            'tax_types.name as name',
-            'tax_types.category as category',
-            'document_taxes.amount as amount',
-            'document_taxes.taxable_base as taxable_base',
-            'document_taxes.rate as rate',
-          ])
-          .where('document_taxes.document_id', '=', id)
-          .execute(),
-        db
-          .selectFrom('document_versions')
-          .select(['id', 'version_number', 'source_hash', 'created_at', 'import_id'])
-          .where('document_id', '=', id)
-          .orderBy('version_number', 'desc')
-          .execute(),
-        db
-          .selectFrom('document_status_history')
-          .select(['status', 'observed_at', 'import_id'])
-          .where('document_id', '=', id)
-          .orderBy('observed_at', 'asc')
-          .execute(),
-        db
-          .selectFrom('validation_issues')
-          .selectAll()
-          .where('document_id', '=', id)
-          .orderBy('created_at', 'desc')
-          .execute(),
-        db
-          .selectFrom('document_events')
-          .selectAll()
-          .where('document_id', '=', id)
-          .orderBy('occurred_at', 'desc')
-          .execute(),
-      ]);
-
-      return { document: doc, taxes, versions, history, issues, events };
-    });
+    return { document: doc, taxes, versions, history, issues, events };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Eventos                                                           */
@@ -501,24 +501,24 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
     async (req) => {
       const q = parseQuery(eventsQuery, req.query);
-      let query = db
-        .selectFrom('document_events')
-        .select([
-          'id',
-          'event_uid',
-          'event_type',
-          'status',
-          'occurred_at',
-          'document_id',
-          'import_id',
-          'created_at',
-        ])
-        .orderBy('occurred_at', 'desc')
-        .limit(q.limit);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      query = query.where('company_id', '=', q.company_id);
-      return { events: await query.execute() };
-    });
+    let query = db
+      .selectFrom('document_events')
+      .select([
+        'id',
+        'event_uid',
+        'event_type',
+        'status',
+        'occurred_at',
+        'document_id',
+        'import_id',
+        'created_at',
+      ])
+      .orderBy('occurred_at', 'desc')
+      .limit(q.limit);
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    query = query.where('company_id', '=', q.company_id);
+    return { events: await query.execute() };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Validaciones                                                      */
@@ -529,24 +529,24 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('issues.read')] },
     async (req) => {
       const q = parseQuery(issuesQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
 
-      let query = db
-        .selectFrom('validation_issues')
-        .leftJoin('documents', 'documents.id', 'validation_issues.document_id')
-        .selectAll('validation_issues')
-        .select(['documents.external_uid as document_uid', 'documents.issued_at as issued_at'])
-        .where('validation_issues.company_id', '=', q.company_id)
-        .orderBy('validation_issues.created_at', 'desc')
-        .limit(q.limit);
+    let query = db
+      .selectFrom('validation_issues')
+      .leftJoin('documents', 'documents.id', 'validation_issues.document_id')
+      .selectAll('validation_issues')
+      .select(['documents.external_uid as document_uid', 'documents.issued_at as issued_at'])
+      .where('validation_issues.company_id', '=', q.company_id)
+      .orderBy('validation_issues.created_at', 'desc')
+      .limit(q.limit);
 
-      if (q.open === 'true') query = query.where('validation_issues.resolved_at', 'is', null);
-      if (q.open === 'false') query = query.where('validation_issues.resolved_at', 'is not', null);
-      if (q.severity) query = query.where('validation_issues.severity', '=', q.severity);
-      if (q.rule_code) query = query.where('validation_issues.rule_code', '=', q.rule_code);
+    if (q.open === 'true') query = query.where('validation_issues.resolved_at', 'is', null);
+    if (q.open === 'false') query = query.where('validation_issues.resolved_at', 'is not', null);
+    if (q.severity) query = query.where('validation_issues.severity', '=', q.severity);
+    if (q.rule_code) query = query.where('validation_issues.rule_code', '=', q.rule_code);
 
-      return { issues: await query.execute() };
-    });
+    return { issues: await query.execute() };
+  });
 
   app.post(
     '/api/issues/:id/resolve',
@@ -556,34 +556,34 @@ export async function buildServer(
       const body = parseQuery(resolveIssueBody, req.body);
       const user = currentUser(req);
       if (!body.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      const issue = await db
-        .selectFrom('validation_issues')
-        .selectAll()
-        .where('id', '=', id)
-        .where('company_id', '=', body.company_id)
-        .executeTakeFirst();
-      if (!issue) throw new HttpError(404, 'NO_ENCONTRADA', 'Incidencia no encontrada.');
+    const issue = await db
+      .selectFrom('validation_issues')
+      .selectAll()
+      .where('id', '=', id)
+      .where('company_id', '=', body.company_id)
+      .executeTakeFirst();
+    if (!issue) throw new HttpError(404, 'NO_ENCONTRADA', 'Incidencia no encontrada.');
 
-      await db
-        .updateTable('validation_issues')
-        .set({ resolved_at: new Date(), resolved_by: user.id })
-        .where('id', '=', id)
-        .execute();
+    await db
+      .updateTable('validation_issues')
+      .set({ resolved_at: new Date(), resolved_by: user.id })
+      .where('id', '=', id)
+      .execute();
 
-      await audit(db, {
-        companyId: issue.company_id,
-        entityType: 'validation_issues',
-        entityId: id,
-        action: 'RESOLVE',
-        userId: user.id,
-        ip: req.ip,
-        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
-        before: { resolved_at: issue.resolved_at } as Json,
-        after: { resolved_at: new Date().toISOString() } as Json,
-      });
-
-      return { resolved: true, id };
+    await audit(db, {
+      companyId: issue.company_id,
+      entityType: 'validation_issues',
+      entityId: id,
+      action: 'RESOLVE',
+      userId: user.id,
+      ip: req.ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+      before: { resolved_at: issue.resolved_at } as Json,
+      after: { resolved_at: new Date().toISOString() } as Json,
     });
+
+    return { resolved: true, id };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Configuración                                                     */
@@ -594,10 +594,10 @@ export async function buildServer(
     { preHandler: [guards.requireCompanyIfPresent, guards.requirePermission('settings.read')] },
     async (req) => {
       const q = parseQuery(companyQuery, req.query);
-      const rows = await settings.getAll(q.company_id ?? null);
-      const effective = await settings.loadMap(q.company_id ?? null);
-      return { rows, effective: Object.fromEntries(effective) };
-    });
+    const rows = await settings.getAll(q.company_id ?? null);
+    const effective = await settings.loadMap(q.company_id ?? null);
+    return { rows, effective: Object.fromEntries(effective) };
+  });
 
   app.put(
     '/api/settings',
@@ -610,8 +610,8 @@ export async function buildServer(
         actorId: user.id,
         description: body.description ?? null,
       });
-      return { created: entry.id === null, updated: entry.id !== null, id: entry.id, entry };
-    });
+    return { created: entry.id === null, updated: entry.id !== null, id: entry.id, entry };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Integraciones                                                     */
@@ -652,27 +652,27 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('integrations.read')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      return {
-        integrations: await listIntegrations(db, companyId),
-        catalog: listAdapters().map((adapter) => ({
-          provider: adapter.provider,
-          name: adapter.displayName,
-          capabilities: adapter.capabilities,
-          sync_resources: adapter.syncResources,
-          fields: adapter.fields,
-        })),
-      };
-    });
+    return {
+      integrations: await listIntegrations(db, companyId),
+      catalog: listAdapters().map((adapter) => ({
+        provider: adapter.provider,
+        name: adapter.displayName,
+        capabilities: adapter.capabilities,
+        sync_resources: adapter.syncResources,
+        fields: adapter.fields,
+      })),
+    };
+  });
 
   app.get(
     '/api/companies/:companyId/integrations/:provider',
     { preHandler: [guards.requireCompany, guards.requirePermission('integrations.read')] },
     async (req) => {
       const params = parseBody(integrationParams, req.params);
-      const integration = await getIntegration(db, params.companyId, params.provider);
-      if (!integration) throw new HttpError(404, 'SIN_INTEGRACION', 'Integración no registrada.');
-      return { integration, catalog: catalogEntry(params.provider) };
-    });
+    const integration = await getIntegration(db, params.companyId, params.provider);
+    if (!integration) throw new HttpError(404, 'SIN_INTEGRACION', 'Integración no registrada.');
+    return { integration, catalog: catalogEntry(params.provider) };
+  });
 
   /**
    * Crea/actualiza la integración. Los settings se validan contra el schema
@@ -698,89 +698,89 @@ export async function buildServer(
       const params = parseBody(integrationParams, req.params);
       const body = parseBody(integrationBody, req.body);
       const user = currentUser(req);
-      const adapter = listAdapters().find((item) => item.provider === params.provider);
-      if (!adapter) throw new HttpError(404, 'PROVIDER_DESCONOCIDO', `Provider "${params.provider}" no registrado.`);
+    const adapter = listAdapters().find((item) => item.provider === params.provider);
+    if (!adapter) throw new HttpError(404, 'PROVIDER_DESCONOCIDO', `Provider "${params.provider}" no registrado.`);
 
-      const before = await getIntegration(db, params.companyId, params.provider);
-      const integrationId = await upsertIntegration(db, {
-        companyId: params.companyId,
-        provider: params.provider,
-        name: body.name,
-        enabled: body.enabled,
-      });
-
-      if (body.settings !== undefined) {
-        const parsed = adapter.settingsSchema.parse(body.settings ?? {});
-        await writeIntegrationSettings(db, integrationId, parsed as Record<string, unknown>);
-      }
-
-      if (body.credentials !== undefined && body.credentials !== null) {
-        const parsed = adapter.credentialsSchema.parse(body.credentials);
-        await writeIntegrationCredentials(db, integrationId, parsed as Record<string, unknown>);
-      }
-
-      if (body.clear_credentials) await clearIntegrationCredentials(db, integrationId);
-
-      const summary = await getIntegration(db, params.companyId, params.provider);
-      if (summary) {
-        const nextStatus = !summary.has_credentials
-          ? 'NOT_CONFIGURED'
-          : summary.status === 'NOT_CONFIGURED'
-            ? 'CONFIGURED'
-            : summary.status;
-        if (nextStatus !== summary.status) {
-          await db
-            .updateTable('company_integrations')
-            .set({ status: nextStatus })
-            .where('id', '=', integrationId)
-            .execute();
-        }
-      }
-
-      integrations.invalidate(integrationId);
-
-      const actions: Array<{ action: string; after: Json }> = [];
-      if (!before) actions.push({ action: 'INTEGRATION_CREATED', after: { provider: params.provider, enabled: body.enabled ?? true } as Json });
-      if (body.settings !== undefined) actions.push({ action: 'INTEGRATION_SETTINGS_UPDATED', after: (body.settings ?? {}) as Json });
-      if (body.credentials !== undefined || body.clear_credentials) {
-        actions.push({ action: 'INTEGRATION_CREDENTIALS_UPDATED', after: { has_credentials: Boolean(body.credentials) && !body.clear_credentials } as Json });
-      }
-      if (body.enabled !== undefined && before && body.enabled !== before.enabled) {
-        actions.push({ action: body.enabled ? 'INTEGRATION_ENABLED' : 'INTEGRATION_DISABLED', after: { enabled: body.enabled } as Json });
-      }
-
-      for (const entry of actions) {
-        await audit(db, {
-          companyId: params.companyId,
-          entityType: 'company_integration',
-          entityId: integrationId,
-          action: entry.action,
-          userId: user.id,
-          ip: req.ip,
-          userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
-          before: null,
-          after: entry.after,
-          metadata: { provider: params.provider } as Json,
-        });
-      }
-
-      return {
-        integration: await getIntegration(db, params.companyId, params.provider),
-        catalog: catalogEntry(params.provider),
-      };
+    const before = await getIntegration(db, params.companyId, params.provider);
+    const integrationId = await upsertIntegration(db, {
+      companyId: params.companyId,
+      provider: params.provider,
+      name: body.name,
+      enabled: body.enabled,
     });
+
+    if (body.settings !== undefined) {
+      const parsed = adapter.settingsSchema.parse(body.settings ?? {});
+      await writeIntegrationSettings(db, integrationId, parsed as Record<string, unknown>);
+    }
+
+    if (body.credentials !== undefined && body.credentials !== null) {
+      const parsed = adapter.credentialsSchema.parse(body.credentials);
+      await writeIntegrationCredentials(db, integrationId, parsed as Record<string, unknown>);
+    }
+
+    if (body.clear_credentials) await clearIntegrationCredentials(db, integrationId);
+
+    const summary = await getIntegration(db, params.companyId, params.provider);
+    if (summary) {
+      const nextStatus = !summary.has_credentials
+        ? 'NOT_CONFIGURED'
+        : summary.status === 'NOT_CONFIGURED'
+          ? 'CONFIGURED'
+          : summary.status;
+      if (nextStatus !== summary.status) {
+        await db
+          .updateTable('company_integrations')
+          .set({ status: nextStatus })
+          .where('id', '=', integrationId)
+          .execute();
+      }
+    }
+
+    integrations.invalidate(integrationId);
+
+    const actions: Array<{ action: string; after: Json }> = [];
+    if (!before) actions.push({ action: 'INTEGRATION_CREATED', after: { provider: params.provider, enabled: body.enabled ?? true } as Json });
+    if (body.settings !== undefined) actions.push({ action: 'INTEGRATION_SETTINGS_UPDATED', after: (body.settings ?? {}) as Json });
+    if (body.credentials !== undefined || body.clear_credentials) {
+      actions.push({ action: 'INTEGRATION_CREDENTIALS_UPDATED', after: { has_credentials: Boolean(body.credentials) && !body.clear_credentials } as Json });
+    }
+    if (body.enabled !== undefined && before && body.enabled !== before.enabled) {
+      actions.push({ action: body.enabled ? 'INTEGRATION_ENABLED' : 'INTEGRATION_DISABLED', after: { enabled: body.enabled } as Json });
+    }
+
+    for (const entry of actions) {
+      await audit(db, {
+        companyId: params.companyId,
+        entityType: 'company_integration',
+        entityId: integrationId,
+        action: entry.action,
+        userId: user.id,
+        ip: req.ip,
+        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+        before: null,
+        after: entry.after,
+        metadata: { provider: params.provider } as Json,
+      });
+    }
+
+    return {
+      integration: await getIntegration(db, params.companyId, params.provider),
+      catalog: catalogEntry(params.provider),
+    };
+  });
 
   app.post(
     '/api/companies/:companyId/integrations/:provider/test',
     { preHandler: [guards.requireCompany, guards.requirePermission('integrations.test')] },
     async (req) => {
       const params = parseBody(integrationParams, req.params);
-      const result = await integrations.testConnection(params.companyId, params.provider, {
-        actorType: 'USER',
-        actorId: 'api',
-      });
-      return { result, integration: await getIntegration(db, params.companyId, params.provider) };
+    const result = await integrations.testConnection(params.companyId, params.provider, {
+      actorType: 'USER',
+      actorId: 'api',
     });
+    return { result, integration: await getIntegration(db, params.companyId, params.provider) };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Matching RADIAN ↔ ERP                                             */
@@ -791,75 +791,75 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      const q = parseQuery(matchesQuery, req.query);
-      let query = db
-        .selectFrom('document_integration_matches as m')
-        .innerJoin('documents as d', 'd.id', 'm.document_id')
-        .select([
-          'm.id as id',
-          'm.document_id as document_id',
-          'm.company_integration_id as company_integration_id',
-          'm.match_status as match_status',
-          'm.match_method as match_method',
-          'm.confidence as confidence',
-          'm.external_id as external_id',
-          'm.external_document_type as external_document_type',
-          'm.external_number as external_number',
-          'm.matched_at as matched_at',
-          'm.last_checked_at as last_checked_at',
-          'm.error_message as error_message',
-          'd.external_uid as external_uid',
-          'd.prefix as prefix',
-          'd.folio as folio',
-          'd.issued_at as issued_at',
-          'd.total as total',
-          'd.direction as direction',
-        ])
-        .where('m.company_id', '=', companyId)
-        .orderBy('m.updated_at', 'desc')
-        .limit(q.limit);
-      if (q.status) query = query.where('m.match_status', '=', q.status);
-      return { matches: await query.execute() };
-    });
+    const q = parseQuery(matchesQuery, req.query);
+    let query = db
+      .selectFrom('document_integration_matches as m')
+      .innerJoin('documents as d', 'd.id', 'm.document_id')
+      .select([
+        'm.id as id',
+        'm.document_id as document_id',
+        'm.company_integration_id as company_integration_id',
+        'm.match_status as match_status',
+        'm.match_method as match_method',
+        'm.confidence as confidence',
+        'm.external_id as external_id',
+        'm.external_document_type as external_document_type',
+        'm.external_number as external_number',
+        'm.matched_at as matched_at',
+        'm.last_checked_at as last_checked_at',
+        'm.error_message as error_message',
+        'd.external_uid as external_uid',
+        'd.prefix as prefix',
+        'd.folio as folio',
+        'd.issued_at as issued_at',
+        'd.total as total',
+        'd.direction as direction',
+      ])
+      .where('m.company_id', '=', companyId)
+      .orderBy('m.updated_at', 'desc')
+      .limit(q.limit);
+    if (q.status) query = query.where('m.match_status', '=', q.status);
+    return { matches: await query.execute() };
+  });
 
   app.post(
     '/api/companies/:companyId/documents/:documentId/match',
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')] },
     async (req) => {
       const params = parseBody(companyParams.extend({ documentId: z.string().uuid() }), req.params);
-      const body = parseBody(matchBody, req.body);
-      const chosen = await pickIntegration(params.companyId, body.provider);
-      const resolved = await integrations.getClient(params.companyId, chosen.provider);
+    const body = parseBody(matchBody, req.body);
+    const chosen = await pickIntegration(params.companyId, body.provider);
+    const resolved = await integrations.getClient(params.companyId, chosen.provider);
 
-      const doc = await loadMatchableDocument(db, params.companyId, params.documentId);
-      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+    const doc = await loadMatchableDocument(db, params.companyId, params.documentId);
+    if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
 
-      const outcome = await matchDocument(resolved, doc, { windowDays: body.window_days });
-      const saved = await persistMatch(db, {
-        companyId: params.companyId,
-        documentId: params.documentId,
-        companyIntegrationId: chosen.id,
-        outcome,
-        dryRun: body.dry_run,
-      });
-
-      return { document_id: params.documentId, provider: chosen.provider, outcome, saved };
+    const outcome = await matchDocument(resolved, doc, { windowDays: body.window_days });
+    const saved = await persistMatch(db, {
+      companyId: params.companyId,
+      documentId: params.documentId,
+      companyIntegrationId: chosen.id,
+      outcome,
+      dryRun: body.dry_run,
     });
+
+    return { document_id: params.documentId, provider: chosen.provider, outcome, saved };
+  });
 
   app.post(
     '/api/companies/:companyId/matches/recheck',
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      const body = parseBody(matchBody, req.body);
-      const summary = await recheckMatches(db, companyId, (provider) => integrations.getClient(companyId, provider), {
-        provider: body.provider,
-        limit: body.limit,
-        windowDays: body.window_days,
-        dryRun: body.dry_run,
-      });
-      return { summary };
+    const body = parseBody(matchBody, req.body);
+    const summary = await recheckMatches(db, companyId, (provider) => integrations.getClient(companyId, provider), {
+      provider: body.provider,
+      limit: body.limit,
+      windowDays: body.window_days,
+      dryRun: body.dry_run,
     });
+    return { summary };
+  });
 
   app.get(
     '/api/companies/:companyId/documents/:documentId/xml',
@@ -1259,11 +1259,11 @@ export async function buildServer(
       // 5. Obtener reglas de cuenta contable del tercero y de la empresa
       const tpRules = thirdPartyId
         ? await db
-          .selectFrom('third_party_tax_rules')
-          .selectAll()
-          .where('company_id', '=', companyId)
-          .where('third_party_id', '=', thirdPartyId)
-          .execute()
+            .selectFrom('third_party_tax_rules')
+            .selectAll()
+            .where('company_id', '=', companyId)
+            .where('third_party_id', '=', thirdPartyId)
+            .execute()
         : [];
 
       const companyConfigs = await db
@@ -1275,12 +1275,12 @@ export async function buildServer(
       // Perfil del tercero para cuentas de gasto / contrapartida y por pagar
       const tpProfile = thirdPartyId
         ? await db
-          .selectFrom('third_party_tax_profiles')
-          .selectAll()
-          .where('company_id', '=', companyId)
-          .where('third_party_id', '=', thirdPartyId)
-          .orderBy('valid_from', 'desc')
-          .executeTakeFirst()
+            .selectFrom('third_party_tax_profiles')
+            .selectAll()
+            .where('company_id', '=', companyId)
+            .where('third_party_id', '=', thirdPartyId)
+            .orderBy('valid_from', 'desc')
+            .executeTakeFirst()
         : null;
 
       // 6. Preparar líneas del comprobante contable (Journal)
@@ -1347,15 +1347,18 @@ export async function buildServer(
         const tpRule = tpRules.find((r) => r.tax_type_id === det.tax_type_id);
         const compRule = companyConfigs.find((c) => c.tax_type_id === det.tax_type_id);
 
-        let accountCode =
-          tpRule?.accounting_account ||
-          compRule?.accounting_account;
+        // 1. Prioridad: Cuenta explícita seleccionada en la determinación de esta factura
+        let accountCode = (det as any).accounting_account;
+
+        // 2. Si no hay en la factura, buscar en regla del tercero o empresa
+        if (!accountCode) {
+          accountCode = tpRule?.accounting_account || compRule?.accounting_account;
+        }
 
         const numRate = Number(det.rate);
 
-        // Si la cuenta configurada es genérica (ej. 23657003 otras retenciones) o no existe,
-        // resolver automáticamente a la cuenta auxiliar exacta de Siigo asociada al porcentaje
-        if (!accountCode || (det.tax_type_code.includes('RENTA') && (accountCode === '23657003' || accountCode === '23654001' && Math.abs(numRate - 0.04) < 0.001))) {
+        // Si no hay cuenta configurada, resolver automáticamente a la cuenta auxiliar exacta de Siigo asociada al porcentaje
+        if (!accountCode) {
           if (det.tax_type_code.includes('RENTA')) {
             if (Math.abs(numRate - 0.04) < 0.001) accountCode = '23652503'; // Servicios 4%
             else if (Math.abs(numRate - 0.06) < 0.001) accountCode = '23652501'; // Servicios 6%
@@ -1379,8 +1382,8 @@ export async function buildServer(
         const ratePercent = Number(det.rate) <= 0.05
           ? Number(det.rate) * 1000 // Si es menor a 0.05 (ej. 0.00866 o 0.01104), probar por mil (8.66 o 11.04)
           : Number(det.rate) <= 1
-            ? Number(det.rate) * 100
-            : Number(det.rate);
+          ? Number(det.rate) * 100
+          : Number(det.rate);
 
         const matchedTax = siigoTaxes.find((st) => {
           if (det.tax_type_code.includes('ICA')) {
@@ -1415,7 +1418,12 @@ export async function buildServer(
           value: amount,
         };
 
-        if (matchedTax) {
+        // Si la cuenta contable en Siigo es genérica (ej. 23657003 "Otras retenciones y patrimonios" o 23659901),
+        // Siigo NO admite amarrar un objeto "tax" y rechaza con error account_settings.
+        // Solo las subcuentas tarifarias específicas (ej. 23654001, 23652503, 23680505) tienen impuesto asociado en Siigo.
+        const isGenericTaxAccount = accountCode === '23657003' || accountCode === '23659901' || accountCode === '23657501';
+
+        if (matchedTax && !isGenericTaxAccount) {
           retItem.tax = { id: matchedTax.id };
         }
 
@@ -1467,13 +1475,22 @@ export async function buildServer(
       if (ivaAmount > 0) {
         const vatAccount = doc.iva_account || tpProfile?.iva_account || (isPurchase ? '24081501' : '24080501');
         const ivaRate = baseGasto > 0 ? (ivaAmount / baseGasto) * 100 : 19;
+        
+        // Enlazar el impuesto de IVA en Siigo correspondiente a la cuenta y tarifa
+        // 24081501 es "Descontable por servicios" y requiere el tax 21284 ("IVA 19% Servicios")
+        // 24081001 es "Iva descontable por compras 19%" y requiere el tax 6499 ("IVA 19%")
+        let matchedIva: any = null;
+        if (vatAccount === '24081501') {
+          matchedIva = siigoTaxes.find((st) => st.id === 21284) || siigoTaxes.find((st) => st.type === 'IVA' && st.name.toLowerCase().includes('servicio'));
+        } else if (vatAccount === '24081003') {
+          matchedIva = siigoTaxes.find((st) => st.id === 6500 || (st.type === 'IVA' && Math.abs(st.percentage - 5) < 1));
+        } else {
+          matchedIva = siigoTaxes.find((st) => st.id === 6499 || (st.type === 'IVA' && Math.abs(st.percentage - 19) < 1 && !st.name.toLowerCase().includes('servicio')));
+        }
 
-        // Enlazar el impuesto de IVA en Siigo correspondiente a la tarifa (ej. 19% -> 6499 o 21284, 5% -> 6500)
-        const matchedIva = siigoTaxes.find((st) => {
-          if (st.type !== 'IVA') return false;
-          if (vatAccount === '24081501' && st.id === 21284) return true; // IVA 19% Servicios
-          return Math.abs(st.percentage - ivaRate) < 1;
-        }) || siigoTaxes.find((st) => st.type === 'IVA' && Math.abs(st.percentage - 19) < 1);
+        if (!matchedIva) {
+          matchedIva = siigoTaxes.find((st) => st.type === 'IVA' && Math.abs(st.percentage - ivaRate) < 1);
+        }
 
         const ivaItem: any = {
           account: {
@@ -1757,50 +1774,50 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      const rows = await db.selectFrom('sync_policies').selectAll().where('company_id', '=', companyId).execute();
-      const routes = await db
-        .selectFrom('sync_policies')
-        .innerJoin('sync_routes', 'sync_routes.sync_policy_id', 'sync_policies.id')
-        .selectAll('sync_routes')
-        .where('sync_policies.company_id', '=', companyId)
-        .execute();
-      return { policies: rows, routes };
-    });
+    const rows = await db.selectFrom('sync_policies').selectAll().where('company_id', '=', companyId).execute();
+    const routes = await db
+      .selectFrom('sync_policies')
+      .innerJoin('sync_routes', 'sync_routes.sync_policy_id', 'sync_policies.id')
+      .selectAll('sync_routes')
+      .where('sync_policies.company_id', '=', companyId)
+      .execute();
+    return { policies: rows, routes };
+  });
 
   app.post(
     '/api/companies/:companyId/sync/run',
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      const body = parseBody(syncRunBody, req.body);
-      if (body.resource !== 'THIRD_PARTIES') {
-        throw new HttpError(400, 'RECURSO_NO_SOPORTADO', `Recurso "${body.resource}" aún no está soportado.`);
-      }
-      const result = await runThirdPartySync(db, integrations, companyId, {
-        resource: 'THIRD_PARTIES',
-        dryRun: body.dry_run,
-        limit: body.limit,
-        actorType: 'USER',
-        actorId: 'api',
-      });
-      return { run: result };
+    const body = parseBody(syncRunBody, req.body);
+    if (body.resource !== 'THIRD_PARTIES') {
+      throw new HttpError(400, 'RECURSO_NO_SOPORTADO', `Recurso "${body.resource}" aún no está soportado.`);
+    }
+    const result = await runThirdPartySync(db, integrations, companyId, {
+      resource: 'THIRD_PARTIES',
+      dryRun: body.dry_run,
+      limit: body.limit,
+      actorType: 'USER',
+      actorId: 'api',
     });
+    return { run: result };
+  });
 
   app.get(
     '/api/companies/:companyId/sync/conflicts',
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      const q = parseQuery(z.object({ status: z.enum(['OPEN', 'RESOLVED', 'IGNORED']).optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }), req.query);
-      let query = db
-        .selectFrom('sync_conflicts')
-        .selectAll()
-        .where('company_id', '=', companyId)
-        .orderBy('created_at', 'desc')
-        .limit(q.limit);
-      if (q.status) query = query.where('status', '=', q.status);
-      return { conflicts: await query.execute() };
-    });
+    const q = parseQuery(z.object({ status: z.enum(['OPEN', 'RESOLVED', 'IGNORED']).optional(), limit: z.coerce.number().int().min(1).max(200).default(100) }), req.query);
+    let query = db
+      .selectFrom('sync_conflicts')
+      .selectAll()
+      .where('company_id', '=', companyId)
+      .orderBy('created_at', 'desc')
+      .limit(q.limit);
+    if (q.status) query = query.where('status', '=', q.status);
+    return { conflicts: await query.execute() };
+  });
 
   app.post(
     '/api/companies/:companyId/sync/conflicts/:id/resolve',
@@ -1809,68 +1826,68 @@ export async function buildServer(
       const params = parseBody(companyParams.extend({ id: z.string().uuid() }), req.params);
       const body = parseBody(conflictResolveBody, req.body);
       const user = currentUser(req);
-      const conflict = await db
-        .selectFrom('sync_conflicts')
-        .selectAll()
-        .where('id', '=', params.id)
-        .where('company_id', '=', params.companyId)
-        .executeTakeFirst();
-      if (!conflict) throw new HttpError(404, 'NO_ENCONTRADO', 'Conflicto no encontrado.');
+    const conflict = await db
+      .selectFrom('sync_conflicts')
+      .selectAll()
+      .where('id', '=', params.id)
+      .where('company_id', '=', params.companyId)
+      .executeTakeFirst();
+    if (!conflict) throw new HttpError(404, 'NO_ENCONTRADO', 'Conflicto no encontrado.');
 
-      if (body.resolution === 'SOURCE_WINS' && conflict.entity_type === 'THIRD_PARTY') {
-        const name = (conflict.source_payload as { name?: string } | null)?.name ?? null;
-        if (name) {
-          await db
-            .updateTable('third_parties')
-            .set({ legal_name: name, normalized_name: nameKey(name) })
-            .where('id', '=', conflict.entity_id)
-            .where('company_id', '=', params.companyId)
-            .execute();
-        }
+    if (body.resolution === 'SOURCE_WINS' && conflict.entity_type === 'THIRD_PARTY') {
+      const name = (conflict.source_payload as { name?: string } | null)?.name ?? null;
+      if (name) {
+        await db
+          .updateTable('third_parties')
+          .set({ legal_name: name, normalized_name: nameKey(name) })
+          .where('id', '=', conflict.entity_id)
+          .where('company_id', '=', params.companyId)
+          .execute();
       }
+    }
 
-      await db
-        .updateTable('sync_conflicts')
-        .set({
-          status: 'RESOLVED',
-          resolution: body.resolution,
-          resolved_at: new Date(),
-          resolved_by: user.id,
-        })
-        .where('id', '=', params.id)
-        .execute();
+    await db
+      .updateTable('sync_conflicts')
+      .set({
+        status: 'RESOLVED',
+        resolution: body.resolution,
+        resolved_at: new Date(),
+        resolved_by: user.id,
+      })
+      .where('id', '=', params.id)
+      .execute();
 
-      await audit(db, {
-        companyId: params.companyId,
-        entityType: 'sync_conflicts',
-        entityId: params.id,
-        action: 'RESOLVE',
-        userId: user.id,
-        ip: req.ip,
-        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
-        before: { status: conflict.status, resolution: conflict.resolution } as Json,
-        after: { status: 'RESOLVED', resolution: body.resolution } as Json,
-        metadata: { resource_type: conflict.resource_type } as Json,
-      });
-
-      return { resolved: true, id: params.id };
+    await audit(db, {
+      companyId: params.companyId,
+      entityType: 'sync_conflicts',
+      entityId: params.id,
+      action: 'RESOLVE',
+      userId: user.id,
+      ip: req.ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+      before: { status: conflict.status, resolution: conflict.resolution } as Json,
+      after: { status: 'RESOLVED', resolution: body.resolution } as Json,
+      metadata: { resource_type: conflict.resource_type } as Json,
     });
+
+    return { resolved: true, id: params.id };
+  });
 
   app.get(
     '/api/companies/:companyId/integration-runs',
     { preHandler: [guards.requireCompany, guards.requirePermission('sync.read')] },
     async (req) => {
       const { companyId } = parseBody(companyParams, req.params);
-      const q = parseQuery(z.object({ limit: z.coerce.number().int().min(1).max(100).default(25) }), req.query);
-      const runs = await db
-        .selectFrom('integration_runs')
-        .selectAll()
-        .where('company_id', '=', companyId)
-        .orderBy('started_at', 'desc')
-        .limit(q.limit)
-        .execute();
-      return { runs };
-    });
+    const q = parseQuery(z.object({ limit: z.coerce.number().int().min(1).max(100).default(25) }), req.query);
+    const runs = await db
+      .selectFrom('integration_runs')
+      .selectAll()
+      .where('company_id', '=', companyId)
+      .orderBy('started_at', 'desc')
+      .limit(q.limit)
+      .execute();
+    return { runs };
+  });
 
   /* ---------------------------------------------------------------- */
   /* Reportería                                                        */
@@ -1881,115 +1898,115 @@ export async function buildServer(
     { preHandler: [guards.requireCompany, guards.requirePermission('reports.read')] },
     async (req) => {
       const q = parseQuery(periodQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      const from = q.from ? periodToIndex(q.from) : null;
-      const to = q.to ? periodToIndex(q.to) : null;
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    const from = q.from ? periodToIndex(q.from) : null;
+    const to = q.to ? periodToIndex(q.to) : null;
 
-      let query = db
-        .selectFrom('reporting_monthly')
-        .selectAll()
-        .where('company_id', '=', q.company_id)
-        .orderBy('year', 'asc')
-        .orderBy('month', 'asc');
-      if (from !== null) query = query.where(sql<boolean>`year * 12 + month - 1 >= ${from}`);
-      if (to !== null) query = query.where(sql<boolean>`year * 12 + month - 1 <= ${to}`);
+    let query = db
+      .selectFrom('reporting_monthly')
+      .selectAll()
+      .where('company_id', '=', q.company_id)
+      .orderBy('year', 'asc')
+      .orderBy('month', 'asc');
+    if (from !== null) query = query.where(sql<boolean>`year * 12 + month - 1 >= ${from}`);
+    if (to !== null) query = query.where(sql<boolean>`year * 12 + month - 1 <= ${to}`);
 
-      return { periods: await query.execute() };
-    });
+    return { periods: await query.execute() };
+  });
 
   app.get(
     '/api/reporting/counterparties',
     { preHandler: [guards.requireCompany, guards.requirePermission('reports.read')] },
     async (req) => {
       const q = parseQuery(counterpartiesQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      const from = q.from ? periodToIndex(q.from) : null;
-      const to = q.to ? periodToIndex(q.to) : null;
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    const from = q.from ? periodToIndex(q.from) : null;
+    const to = q.to ? periodToIndex(q.to) : null;
 
-      let query = db
-        .selectFrom('reporting_counterparty_monthly as m')
-        .innerJoin('third_parties', 'third_parties.id', 'm.third_party_id')
-        .select([
-          'third_parties.id as id',
-          'third_parties.tax_id as tax_id',
-          'third_parties.legal_name as legal_name',
-          'third_parties.normalized_name as normalized_name',
-          (eb) => eb.fn.sum<number>('m.sales_count').as('sales_count'),
-          (eb) => eb.fn.sum<number>('m.sales_total').as('sales_total'),
-          (eb) => eb.fn.sum<number>('m.purchase_count').as('purchase_count'),
-          (eb) => eb.fn.sum<number>('m.purchase_total').as('purchase_total'),
-          (eb) => eb.fn.sum<number>('m.credit_notes_count').as('credit_notes_count'),
-          (eb) => eb.fn.sum<number>('m.credit_notes_total').as('credit_notes_total'),
-          (eb) => eb.fn.sum<number>('m.tax_total').as('tax_total'),
-          (eb) => eb.fn.min<string>('m.first_transaction_date').as('first_transaction_date'),
-          (eb) => eb.fn.max<string>('m.last_transaction_date').as('last_transaction_date'),
-        ])
-        .where('m.company_id', '=', q.company_id)
-        .groupBy(['third_parties.id', 'third_parties.tax_id', 'third_parties.legal_name', 'third_parties.normalized_name'])
-        .orderBy(sql<number>`sum(m.sales_total) + sum(m.purchase_total)`, 'desc')
-        .limit(q.limit);
+    let query = db
+      .selectFrom('reporting_counterparty_monthly as m')
+      .innerJoin('third_parties', 'third_parties.id', 'm.third_party_id')
+      .select([
+        'third_parties.id as id',
+        'third_parties.tax_id as tax_id',
+        'third_parties.legal_name as legal_name',
+        'third_parties.normalized_name as normalized_name',
+        (eb) => eb.fn.sum<number>('m.sales_count').as('sales_count'),
+        (eb) => eb.fn.sum<number>('m.sales_total').as('sales_total'),
+        (eb) => eb.fn.sum<number>('m.purchase_count').as('purchase_count'),
+        (eb) => eb.fn.sum<number>('m.purchase_total').as('purchase_total'),
+        (eb) => eb.fn.sum<number>('m.credit_notes_count').as('credit_notes_count'),
+        (eb) => eb.fn.sum<number>('m.credit_notes_total').as('credit_notes_total'),
+        (eb) => eb.fn.sum<number>('m.tax_total').as('tax_total'),
+        (eb) => eb.fn.min<string>('m.first_transaction_date').as('first_transaction_date'),
+        (eb) => eb.fn.max<string>('m.last_transaction_date').as('last_transaction_date'),
+      ])
+      .where('m.company_id', '=', q.company_id)
+      .groupBy(['third_parties.id', 'third_parties.tax_id', 'third_parties.legal_name', 'third_parties.normalized_name'])
+      .orderBy(sql<number>`sum(m.sales_total) + sum(m.purchase_total)`, 'desc')
+      .limit(q.limit);
 
-      if (from !== null) query = query.where(sql<boolean>`m.year * 12 + m.month - 1 >= ${from}`);
-      if (to !== null) query = query.where(sql<boolean>`m.year * 12 + m.month - 1 <= ${to}`);
-      if (q.search) query = query.where('third_parties.legal_name', 'ilike', `%${q.search}%`);
+    if (from !== null) query = query.where(sql<boolean>`m.year * 12 + m.month - 1 >= ${from}`);
+    if (to !== null) query = query.where(sql<boolean>`m.year * 12 + m.month - 1 <= ${to}`);
+    if (q.search) query = query.where('third_parties.legal_name', 'ilike', `%${q.search}%`);
 
-      let rows = await query.execute();
-      if (q.role === 'cliente') rows = rows.filter((r) => Number(r.sales_count) > 0);
-      if (q.role === 'proveedor') rows = rows.filter((r) => Number(r.purchase_count) > 0);
+    let rows = await query.execute();
+    if (q.role === 'cliente') rows = rows.filter((r) => Number(r.sales_count) > 0);
+    if (q.role === 'proveedor') rows = rows.filter((r) => Number(r.purchase_count) > 0);
 
-      const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
+    const round2 = (value: number): number => Math.round((value + Number.EPSILON) * 100) / 100;
 
-      return {
-        counterparties: rows.map((r) => ({
-          ...r,
-          sales_count: Number(r.sales_count),
-          sales_total: round2(Number(r.sales_total)),
-          purchase_count: Number(r.purchase_count),
-          purchase_total: round2(Number(r.purchase_total)),
-          credit_notes_count: Number(r.credit_notes_count),
-          credit_notes_total: round2(Number(r.credit_notes_total)),
-          tax_total: round2(Number(r.tax_total)),
-          total: round2(Number(r.sales_total) + Number(r.purchase_total)),
-        })),
-      };
-    });
+    return {
+      counterparties: rows.map((r) => ({
+        ...r,
+        sales_count: Number(r.sales_count),
+        sales_total: round2(Number(r.sales_total)),
+        purchase_count: Number(r.purchase_count),
+        purchase_total: round2(Number(r.purchase_total)),
+        credit_notes_count: Number(r.credit_notes_count),
+        credit_notes_total: round2(Number(r.credit_notes_total)),
+        tax_total: round2(Number(r.tax_total)),
+        total: round2(Number(r.sales_total) + Number(r.purchase_total)),
+      })),
+    };
+  });
 
   app.get(
     '/api/reporting/taxes',
     { preHandler: [guards.requireCompany, guards.requirePermission('reports.read')] },
     async (req) => {
       const q = parseQuery(periodQuery, req.query);
-      if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      const from = q.from ? periodToIndex(q.from) : null;
-      const to = q.to ? periodToIndex(q.to) : null;
+    if (!q.company_id) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+    const from = q.from ? periodToIndex(q.from) : null;
+    const to = q.to ? periodToIndex(q.to) : null;
 
-      let query = db
-        .selectFrom('reporting_tax_monthly as r')
-        .innerJoin('tax_types', 'tax_types.id', 'r.tax_type_id')
-        .select([
-          'tax_types.code as code',
-          'tax_types.name as name',
-          'tax_types.category as category',
-          'r.direction as direction',
-          (eb) => eb.fn.sum<number>('r.document_count').as('document_count'),
-          (eb) => eb.fn.sum<number>('r.tax_amount').as('tax_amount'),
-        ])
-        .where('r.company_id', '=', q.company_id)
-        .groupBy(['tax_types.code', 'tax_types.name', 'tax_types.category', 'r.direction'])
-        .orderBy('tax_types.code');
+    let query = db
+      .selectFrom('reporting_tax_monthly as r')
+      .innerJoin('tax_types', 'tax_types.id', 'r.tax_type_id')
+      .select([
+        'tax_types.code as code',
+        'tax_types.name as name',
+        'tax_types.category as category',
+        'r.direction as direction',
+        (eb) => eb.fn.sum<number>('r.document_count').as('document_count'),
+        (eb) => eb.fn.sum<number>('r.tax_amount').as('tax_amount'),
+      ])
+      .where('r.company_id', '=', q.company_id)
+      .groupBy(['tax_types.code', 'tax_types.name', 'tax_types.category', 'r.direction'])
+      .orderBy('tax_types.code');
 
-      if (from !== null) query = query.where(sql<boolean>`r.year * 12 + r.month - 1 >= ${from}`);
-      if (to !== null) query = query.where(sql<boolean>`r.year * 12 + r.month - 1 <= ${to}`);
+    if (from !== null) query = query.where(sql<boolean>`r.year * 12 + r.month - 1 >= ${from}`);
+    if (to !== null) query = query.where(sql<boolean>`r.year * 12 + r.month - 1 <= ${to}`);
 
-      const rows = await query.execute();
-      return {
-        taxes: rows.map((r) => ({
-          ...r,
-          document_count: Number(r.document_count),
-          tax_amount: Number(r.tax_amount),
-        })),
-      };
-    });
+    const rows = await query.execute();
+    return {
+      taxes: rows.map((r) => ({
+        ...r,
+        document_count: Number(r.document_count),
+        tax_amount: Number(r.tax_amount),
+      })),
+    };
+  });
 
   return app;
 }
