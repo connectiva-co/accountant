@@ -514,15 +514,19 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
             <button
               type="button"
               onClick={handleSyncToSiigo}
-              disabled={syncingToSiigo || document.match_status === 'MATCHED'}
+              disabled={syncingToSiigo}
               className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer text-white shadow-xs ${
                 document.match_status === 'MATCHED'
-                  ? 'bg-ink-muted/50 cursor-not-allowed'
+                  ? 'bg-blue-600 hover:bg-blue-700'
                   : 'bg-emerald-600 hover:bg-emerald-700'
               }`}
             >
               {syncingToSiigo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
-              {document.match_status === 'MATCHED' ? 'Sincronizado con Siigo' : syncingToSiigo ? 'Subiendo a Siigo...' : 'Subir a Siigo (Comprobante)'}
+              {syncingToSiigo
+                ? 'Subiendo a Siigo...'
+                : document.match_status === 'MATCHED'
+                ? 'Re-sincronizar en Siigo'
+                : 'Subir a Siigo (Comprobante)'}
             </button>
             <button
               type="button"
