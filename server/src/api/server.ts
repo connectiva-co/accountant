@@ -1563,7 +1563,7 @@ export async function buildServer(
       const { companyId, documentId } = parseBody(companyDocParams, req.params);
       const doc = await db
         .selectFrom('documents')
-        .select(['id'])
+        .select(['id', 'expense_account', 'payment_account'])
         .where('company_id', '=', companyId)
         .where('id', '=', documentId)
         .executeTakeFirst();
@@ -1578,6 +1578,8 @@ export async function buildServer(
 
       return {
         document_id: documentId,
+        expense_account: doc.expense_account ?? null,
+        payment_account: doc.payment_account ?? null,
         taxes: rows.map((r) => ({
           tax_code: r.tax_code,
           tax_name: r.tax_name,
@@ -1586,6 +1588,29 @@ export async function buildServer(
           amount: Number(r.amount),
         })),
       };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Actualizar cuenta de pago / tesorería (PUC) de un documento      */
+  /* ---------------------------------------------------------------- */
+  app.patch(
+    '/api/companies/:companyId/documents/:documentId/payment-account',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+      const { payment_account } = req.body as { payment_account?: string | null };
+
+      await db
+        .updateTable('documents')
+        .set({
+          payment_account: payment_account?.trim() || null,
+        })
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .execute();
+
+      return { success: true, payment_account: payment_account?.trim() || null };
     },
   );
 

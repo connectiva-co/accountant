@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import {
   api,
+  type AccountingAccountDto,
   type TaxConceptDto,
   type TaxDeterminationDto,
   type ThirdPartyTaxProfileDto,
@@ -52,9 +53,12 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [determinations, setDeterminations] = useState<TaxDeterminationDto[]>([]);
   const [companyConfigs, setCompanyConfigs] = useState<Record<string, boolean>>({});
 
-  // Selección de conceptos
+  // Selección de conceptos y cuenta PUC de tesorería/pago
   const [selectedRentaConceptId, setSelectedRentaConceptId] = useState<string>('');
   const [selectedIcaConceptId, setSelectedIcaConceptId] = useState<string>('');
+  const [documentPaymentAccount, setDocumentPaymentAccount] = useState<string>('');
+  const [accountingAccounts, setAccountingAccounts] = useState<AccountingAccountDto[]>([]);
+  const [savingPaymentAccount, setSavingPaymentAccount] = useState<boolean>(false);
 
   // Modales
   const [showProfileModal, setShowProfileModal] = useState<boolean>(false);
@@ -113,14 +117,20 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
     setError(null);
 
     try {
-      const [conceptsRes, detRes, configsRes] = await Promise.all([
+      const [conceptsRes, detRes, configsRes, docTaxesRes, accountsRes] = await Promise.all([
         api.getTaxConcepts(),
         api.getDocumentTaxDeterminations(companyId, documentId).catch(() => ({ determinations: [] })),
         api.getCompanyTaxConfigurations(companyId).catch(() => ({ configurations: [] })),
+        api.getDocumentTaxes(companyId, documentId).catch(() => ({ document_id: documentId, expense_account: null, payment_account: null, taxes: [] })),
+        api.getAccountingAccounts(companyId).catch(() => ({ accounts: [] })),
       ]);
 
       setConcepts(conceptsRes.concepts);
       setDeterminations(detRes.determinations);
+      setAccountingAccounts(accountsRes.accounts);
+      if (docTaxesRes.payment_account) {
+        setDocumentPaymentAccount(docTaxesRes.payment_account);
+      }
 
       // Mapear qué impuestos están habilitados para la empresa
       const enabledMap: Record<string, boolean> = {};
@@ -231,6 +241,20 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       setOverrideError(err.message || 'Error aplicando ajuste manual');
     } finally {
       setOverrideSaving(false);
+    }
+  };
+
+  const handlePaymentAccountChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setDocumentPaymentAccount(val);
+    if (!companyId || !documentId) return;
+    setSavingPaymentAccount(true);
+    try {
+      await api.updateDocumentPaymentAccount(companyId, documentId, val || null);
+    } catch (err: any) {
+      setError(err.message || 'Error guardando cuenta de tesorería de la factura');
+    } finally {
+      setSavingPaymentAccount(false);
     }
   };
 
@@ -416,6 +440,50 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
         )}
       </div>
       )}
+
+      {/* Selector de Cuenta PUC (Origen del dinero / Tesorería / Cruce) para esta factura */}
+      <div className="rounded-lg border border-line bg-canvas/40 p-3">
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-[11px] font-semibold text-ink">
+            Cuenta Contable de Salida / Cruce (Caja / Banco) para esta Factura
+          </label>
+          {savingPaymentAccount && (
+            <span className="text-[10px] text-ink-faint flex items-center gap-1">
+              <Loader2 className="w-2.5 h-2.5 animate-spin text-brand" /> Guardando...
+            </span>
+          )}
+        </div>
+        <select
+          value={documentPaymentAccount || profile?.payment_account || ''}
+          onChange={handlePaymentAccountChange}
+          disabled={loading || savingPaymentAccount}
+          className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-xs text-ink focus:outline-none focus:border-brand font-mono font-medium truncate"
+        >
+          <option value="">
+            {profile?.payment_account
+              ? `Por defecto del tercero: ${profile.payment_account}`
+              : '-- Seleccionar cuenta de tesorería (Caja / Banco) --'}
+          </option>
+          {accountingAccounts
+            .filter((a) => a.is_active)
+            .map((acc) => (
+              <option key={acc.id} value={acc.code}>
+                {acc.code} - {acc.name}
+              </option>
+            ))}
+          {documentPaymentAccount &&
+            !accountingAccounts.some((a) => a.code === documentPaymentAccount) && (
+              <option value={documentPaymentAccount}>
+                {documentPaymentAccount} (Personalizada)
+              </option>
+            )}
+        </select>
+        <span className="text-[10px] text-ink-muted block mt-1">
+          {profile?.payment_account
+            ? `Predeterminada para ${thirdPartyName || 'este tercero'}: ${profile.payment_account}. Especifica de qué cuenta bancaria o caja sale el dinero para el cruce de esta factura.`
+            : 'Especifica de qué cuenta (Banco o Caja activa en el PUC) saldrá el dinero para el cruce contable posterior.'}
+        </span>
+      </div>
 
       {/* Tabla / Tarjetas de Determinaciones */}
       {determinations.length > 0 && (

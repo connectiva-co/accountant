@@ -399,6 +399,7 @@ export interface ThirdPartyTaxProfileDto {
   is_declarant_renta: boolean;
   expense_account?: string | null;
   payable_account?: string | null;
+  payment_account?: string | null;
   document_type_id?: number | null;
   valid_from: string;
   valid_to: string;
@@ -418,6 +419,7 @@ export interface UpsertTaxProfileInput {
   is_declarant_renta: boolean;
   expense_account?: string | null;
   payable_account?: string | null;
+  payment_account?: string | null;
   document_type_id?: number | null;
   responsibility_ids: string[];
   valid_from?: string;
@@ -433,6 +435,18 @@ export interface AccountingAccountDto {
   is_transactional: boolean;
   is_active: boolean;
   category: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiigoDocumentTypeDto {
+  id: number;
+  company_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  type: string;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -770,10 +784,38 @@ export const api = {
     }>(`/api/companies/${cId}/documents/${documentId}/xml`);
   },
 
-  getSiigoDocumentTypes: (companyId: string | null | undefined, type: string = 'CC') => {
+  getSiigoDocumentTypes: (companyId: string | null | undefined, options?: { type?: string; activeOnly?: boolean }) => {
     const cId = resolveEffectiveCompanyId(companyId);
-    return request<{ document_types: Array<{ id: number; code: string; name: string; description?: string }> }>(
-      `/api/companies/${cId}/integrations/siigo/document-types?type=${type}`
+    const type = options?.type || 'CC';
+    const active = options?.activeOnly ? '&activeOnly=true' : '';
+    return request<{ document_types: Array<{ id: number; code: string; name: string; description?: string; is_active?: boolean }> }>(
+      `/api/companies/${cId}/integrations/siigo/document-types?type=${type}${active}`
+    );
+  },
+
+  toggleSiigoDocumentType: (companyId: string | null | undefined, id: number, is_active: boolean) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/integrations/siigo/document-types/${id}/toggle`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active }),
+    });
+  },
+
+  toggleAllSiigoDocumentTypes: (companyId: string | null | undefined, is_active: boolean, type?: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/integrations/siigo/document-types/toggle-all`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active, type }),
+    });
+  },
+
+  syncSiigoDocumentTypes: (companyId: string | null | undefined, type: string = 'CC') => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean; total: number; inserted: number; updated: number }>(
+      `/api/companies/${cId}/integrations/siigo/sync-document-types`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) }
     );
   },
 
@@ -977,6 +1019,8 @@ export const api = {
   getDocumentTaxes: (companyId: string, documentId: string) =>
     request<{
       document_id: string;
+      expense_account?: string | null;
+      payment_account?: string | null;
       taxes: Array<{
         tax_code: string;
         tax_name: string;
@@ -985,6 +1029,26 @@ export const api = {
         amount: number;
       }>;
     }>(`/api/companies/${companyId}/documents/${documentId}/taxes`),
+
+  updateDocumentPaymentAccount: (companyId: string, documentId: string, payment_account: string | null) =>
+    request<{ success: boolean; payment_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/payment-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_account }),
+      },
+    ),
+
+  updateDocumentExpenseAccount: (companyId: string, documentId: string, expense_account: string | null) =>
+    request<{ success: boolean; expense_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/expense-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expense_account }),
+      },
+    ),
 
   updateDocumentTaxes: (
     companyId: string,

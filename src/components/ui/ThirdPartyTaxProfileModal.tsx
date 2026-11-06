@@ -54,9 +54,10 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
   const [icaMunicipalityCode, setIcaMunicipalityCode] = useState<string>('11001');
   const [expenseAccount, setExpenseAccount] = useState<string>('');
   const [payableAccount, setPayableAccount] = useState<string>('');
+  const [paymentAccount, setPaymentAccount] = useState<string>('');
   const [documentTypeId, setDocumentTypeId] = useState<number | null>(null);
   const [siigoDocTypes, setSiigoDocTypes] = useState<Array<{ id: number; code: string; name: string }>>([]);
-  const [accountingAccounts, setAccountingAccounts] = useState<Array<{ id: string; code: string; name: string; category: string | null }>>([]);
+  const [accountingAccounts, setAccountingAccounts] = useState<Array<{ id: string; code: string; name: string; category: string | null; is_active?: boolean }>>([]);
   const [selectedRespIds, setSelectedRespIds] = useState<string[]>([]);
   const [resolvedThirdParty, setResolvedThirdParty] = useState<{ id: string; tax_id: string; legal_name: string } | null>(null);
 
@@ -84,8 +85,8 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         api.getThirdPartyTaxProfile(companyId, thirdPartyIdentifier).catch(() => ({ profile: null, third_party: null } as any)),
         api.getTaxConcepts(),
         api.getThirdPartyTaxRules(companyId, thirdPartyIdentifier).catch(() => ({ rules: [] })),
-        api.getSiigoDocumentTypes(companyId, 'CC').catch(() => ({ document_types: [] })),
-        api.getAccountingAccounts(companyId, { activeOnly: true }).catch(() => ({ accounts: [] })),
+        api.getSiigoDocumentTypes(companyId, { type: 'CC' }).catch(() => ({ document_types: [] })),
+        api.getAccountingAccounts(companyId).catch(() => ({ accounts: [] })),
       ]);
 
       setCatalogResponsibilities(respRes.responsibilities);
@@ -112,6 +113,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setIcaMunicipalityCode(p.ica_municipality_code ?? '11001');
         setExpenseAccount(p.expense_account ?? '');
         setPayableAccount(p.payable_account ?? '');
+        setPaymentAccount((p as any).payment_account ?? '');
         setDocumentTypeId(p.document_type_id ?? null);
         setSelectedRespIds(p.responsibilities.map((r) => r.id));
       } else {
@@ -123,6 +125,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         setIcaMunicipalityCode('11001');
         setExpenseAccount('');
         setPayableAccount('');
+        setPaymentAccount('');
         setDocumentTypeId(null);
         setSelectedRespIds([]);
       }
@@ -159,6 +162,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
         is_declarant_renta: isDeclarantRenta,
         expense_account: expenseAccount.trim() || null,
         payable_account: payableAccount.trim() || null,
+        payment_account: paymentAccount.trim() || null,
         document_type_id: documentTypeId,
         responsibility_ids: selectedRespIds,
       });
@@ -424,7 +428,7 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
             </div>
 
             {/* Cuentas Contables y Tipo de Comprobante Siigo */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               <div>
                 <label className="block text-xs font-medium text-ink-muted mb-1">
                   Cuenta Gasto / Costo
@@ -470,6 +474,29 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                     ))}
                   {payableAccount && payableAccount !== '22050501' && !accountingAccounts.some((a) => a.code === payableAccount) && (
                     <option value={payableAccount}>{payableAccount} (Personalizada)</option>
+                  )}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-ink-muted mb-1">
+                  Cuenta Cruce / Salida
+                </label>
+                <select
+                  value={paymentAccount}
+                  onChange={(e) => setPaymentAccount(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-lg border border-line bg-canvas text-xs text-ink focus:outline-none focus:border-brand font-mono truncate"
+                >
+                  <option value="">-- Sin cuenta predeterminada --</option>
+                  {accountingAccounts
+                    .filter((a) => a.is_active)
+                    .map((acc) => (
+                      <option key={acc.id} value={acc.code}>
+                        {acc.code} - {acc.name}
+                      </option>
+                    ))}
+                  {paymentAccount && !accountingAccounts.some((a) => a.code === paymentAccount) && (
+                    <option value={paymentAccount}>{paymentAccount} (Personalizada)</option>
                   )}
                 </select>
               </div>
@@ -721,13 +748,23 @@ export const ThirdPartyTaxProfileModal: React.FC<Props> = ({
                     <label className="block text-[11px] text-ink-muted mb-1">
                       Cuenta Contable Siigo (Opcional)
                     </label>
-                    <input
-                      type="text"
+                    <select
                       value={ruleAccount}
                       onChange={(e) => setRuleAccount(e.target.value)}
-                      placeholder="Ej. 23657003"
-                      className="w-full px-2.5 py-1.5 rounded border border-line bg-canvas text-ink font-mono font-medium"
-                    />
+                      className="w-full px-2.5 py-1.5 rounded border border-line bg-canvas text-ink font-mono text-xs"
+                    >
+                      <option value="">Cuenta por defecto del concepto</option>
+                      {accountingAccounts
+                        .filter((a) => a.code.startsWith('2365') || a.code.startsWith('2367') || a.code.startsWith('2368') || a.code.startsWith('1355'))
+                        .map((acc) => (
+                          <option key={acc.id} value={acc.code}>
+                            {acc.code} - {acc.name}
+                          </option>
+                        ))}
+                      {ruleAccount && !accountingAccounts.some((a) => a.code === ruleAccount) && (
+                        <option value={ruleAccount}>{ruleAccount} (Personalizada)</option>
+                      )}
+                    </select>
                     <span className="text-[10px] text-ink-muted block mt-0.5">
                       Código contable donde se registrará la retención en Siigo
                     </span>

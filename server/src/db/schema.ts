@@ -124,6 +124,8 @@ export interface DocumentsTable {
   last_seen_import_id: string | null;
   is_active: Generated<boolean>;
   superseded_at: TimestamptzNull;
+  expense_account: string | null;
+  payment_account: string | null;
   created_at: CreatedAt;
   updated_at: CreatedAt;
 }
@@ -621,6 +623,7 @@ export interface ThirdPartyTaxProfilesTable {
   valid_to: ColumnType<string, string | undefined, string>;
   expense_account: string | null;
   payable_account: string | null;
+  payment_account: string | null;
   document_type_id: number | null;
   metadata: Generated<Json>;
   created_at: CreatedAt;
@@ -729,6 +732,18 @@ export interface AccountingAccountsTable {
   updated_at: Timestamptz;
 }
 
+export interface SiigoDocumentTypesTable {
+  id: number;
+  company_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  type: Generated<string>;
+  is_active: Generated<boolean>;
+  created_at: CreatedAt;
+  updated_at: Timestamptz;
+}
+
 export interface Database {
   companies: CompaniesTable;
   imports: ImportsTable;
@@ -757,6 +772,7 @@ export interface Database {
   document_integration_matches: DocumentIntegrationMatchesTable;
   sync_policies: SyncPoliciesTable;
   accounting_accounts: AccountingAccountsTable;
+  siigo_document_types: SiigoDocumentTypesTable;
   sync_routes: SyncRoutesTable;
   sync_mappings: SyncMappingsTable;
   entity_external_refs: EntityExternalRefsTable;
