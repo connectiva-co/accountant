@@ -42,6 +42,14 @@ export const SiigoSettingsSchema = z.object({
     (value) => (value === '' || value === undefined || value === null ? undefined : value),
     z.coerce.number().int().min(1_000).max(180_000).optional(),
   ),
+  sales_withholding_account: z.preprocess(
+    (value) => (value === '' || value === undefined ? '1355' : value),
+    z.string().trim().max(30).default('1355'),
+  ),
+  purchases_withholding_account: z.preprocess(
+    (value) => (value === '' || value === undefined ? '2365' : value),
+    z.string().trim().max(30).default('2365'),
+  ),
 });
 
 export const SiigoCredentialsSchema = z.object({
@@ -169,6 +177,24 @@ export const siigoAdapter: IntegrationAdapter<SiigoSettings, SiigoCredentials, S
       min: 1_000,
       max: 180_000,
       help: 'Por defecto 30000.',
+    },
+    {
+      key: 'sales_withholding_account',
+      label: 'Cuenta Contable Retenciones Ventas',
+      type: 'text',
+      group: 'settings',
+      required: false,
+      placeholder: '1355',
+      help: 'Cuenta contable en Siigo para retenciones practicadas en ventas (por defecto 1355 - Anticipo de impuestos).',
+    },
+    {
+      key: 'purchases_withholding_account',
+      label: 'Cuenta Contable Retenciones Compras',
+      type: 'text',
+      group: 'settings',
+      required: false,
+      placeholder: '2365',
+      help: 'Cuenta contable en Siigo para retenciones practicadas en compras (por defecto 2365 - Retención en la fuente).',
     },
   ],
 

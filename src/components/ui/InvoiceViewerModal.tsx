@@ -5,7 +5,6 @@ import {
   Copy,
   Check,
   Download,
-  AlertCircle,
   Building2,
   User,
   ShieldCheck,
@@ -14,43 +13,77 @@ import {
   Loader2,
   Code2,
   RefreshCw,
+  UploadCloud,
 } from 'lucide-react';
 import { api, type ParsedUblInvoice } from '../../api/client';
 import type { RadianRecord } from '../../types/radian';
 import { formatCurrency, formatDate } from '../../utils/formatters';
+import { InvoiceTaxLiquidator } from './InvoiceTaxLiquidator';
 
 interface Props {
   document: RadianRecord;
   companyId: string | null;
   onClose: () => void;
+  onTaxesSaved?: () => void;
 }
 
-export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClose }) => {
+export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClose, onTaxesSaved }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<{ invoice: ParsedUblInvoice; raw_xml: string } | null>(null);
   const [copiedCufe, setCopiedCufe] = useState(false);
   const [showRawXml, setShowRawXml] = useState(false);
 
+  const effectiveCompanyId =
+    companyId ||
+    (typeof window !== 'undefined' ? localStorage.getItem('accountant_selected_company_id') : null) ||
+    'c92e7f20-3aff-4c6d-860e-795bbf5c061d';
+
+  const [syncingToSiigo, setSyncingToSiigo] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleSyncToSiigo = async () => {
+    if (!document.id || !effectiveCompanyId) return;
+    try {
+      setSyncingToSiigo(true);
+      setSyncResult(null);
+      const res = await api.syncDocumentToSiigo(effectiveCompanyId, document.id);
+      setSyncResult({
+        success: true,
+        message: `Comprobante creado exitosamente en Siigo: #${res.number || res.external_id || 'OK'}`,
+      });
+      if (onTaxesSaved) {
+        onTaxesSaved();
+      }
+    } catch (err) {
+      setSyncResult({
+        success: false,
+        message: err instanceof Error ? err.message : 'Error al sincronizar con Siigo',
+      });
+    } finally {
+      setSyncingToSiigo(false);
+    }
+  };
+
   const docFolio = document.Prefijo ? `${document.Prefijo}-${document.Folio}` : String(document.Folio);
 
   const fetchXml = React.useCallback(async () => {
-    if (!companyId || !document.id) {
-      setError('Documento o empresa no identificados.');
+    if (!document.id) {
+      setError('Documento no identificado.');
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const res = await api.getDocumentXml(companyId, document.id);
+      const res = await api.getDocumentXml(effectiveCompanyId, document.id);
       setData({ invoice: res.invoice, raw_xml: res.raw_xml });
       setLoading(false);
     } catch (err: any) {
       setError(err?.message || 'No se pudo obtener el XML oficial desde Siigo.');
       setLoading(false);
     }
-  }, [companyId, document.id]);
+  }, [effectiveCompanyId, document.id]);
 
   useEffect(() => {
     void fetchXml();
@@ -132,37 +165,76 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
           )}
 
           {error && !loading && (
-            <div className="p-5 rounded-md border border-red-500/20 bg-red-500/5 text-danger space-y-3">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-500" />
-                <div className="space-y-1.5 flex-1">
-                  <p className="text-[14px] font-semibold text-ink">No se pudo cargar la factura {docFolio}</p>
-                  <div className="text-[12px] text-red-600 dark:text-red-400 font-mono bg-surface p-2.5 rounded border border-red-500/20 break-words">
-                    {error}
-                  </div>
-                  {document.match_error && document.match_error !== error && (
-                    <p className="text-[11px] text-ink-muted">
-                      Último estado registrado en cotejo: <span className="font-mono text-ink font-medium">{document.match_error}</span>
-                    </p>
-                  )}
+            <div className="space-y-5">
+              {/* Document Summary Card from RADIAN */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-card border border-line bg-canvas space-y-1.5">
+                  <span className="text-[11px] font-semibold text-brand uppercase tracking-wider block">
+                    Emisor / Proveedor
+                  </span>
+                  <h3 className="text-[14px] font-bold text-ink">{document['Nombre Emisor'] || '—'}</h3>
+                  <p className="text-[12px] text-ink-muted num font-medium">NIT: {document['NIT Emisor'] || '—'}</p>
+                </div>
+                <div className="p-4 rounded-card border border-line bg-canvas space-y-1.5">
+                  <span className="text-[11px] font-semibold text-brand uppercase tracking-wider block">
+                    Receptor / Cliente
+                  </span>
+                  <h3 className="text-[14px] font-bold text-ink">{document['Nombre Receptor'] || '—'}</h3>
+                  <p className="text-[12px] text-ink-muted num font-medium">NIT: {document['NIT Receptor'] || '—'}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 pt-2 border-t border-red-500/10">
-                <button
-                  type="button"
-                  onClick={() => void fetchXml()}
-                  className="px-3 py-1.5 rounded-md bg-brand text-surface text-[12px] font-medium hover:bg-brand/90 transition cursor-pointer inline-flex items-center gap-1.5"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Reintentar sincronización ahora
-                </button>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-3 py-1.5 rounded-md bg-surface hover:bg-canvas border border-line text-ink text-[12px] font-medium transition cursor-pointer"
-                >
-                  Cerrar
-                </button>
+
+              {/* Financial values strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 p-3 rounded-lg bg-surface border border-line text-[11px]">
+                <div>
+                  <span className="text-ink-muted block text-[10px]">Fecha Emisión</span>
+                  <span className="num font-semibold text-ink">{document['Fecha Emisión'] || '—'}</span>
+                </div>
+                <div>
+                  <span className="text-ink-muted block text-[10px]">IVA Reportado</span>
+                  <span className="num font-semibold text-ink">{formatCurrency(document.IVA || 0)}</span>
+                </div>
+                <div>
+                  <span className="text-ink-muted block text-[10px]">Total Documento</span>
+                  <span className="num font-bold text-brand">{formatCurrency(document.Total || 0)}</span>
+                </div>
+              </div>
+
+              {/* Tax liquidator for this document */}
+              {document.id && (
+                <InvoiceTaxLiquidator
+                  documentId={document.id}
+                  companyId={effectiveCompanyId}
+                  thirdPartyIdentifier={String(
+                    document.Grupo === 'Recibido' ? document['NIT Emisor'] : document['NIT Receptor']
+                  )}
+                  thirdPartyName={String(
+                    document.Grupo === 'Recibido' ? document['Nombre Emisor'] : document['Nombre Receptor']
+                  )}
+                  defaultBase={document.baseCalculada || Math.max(0, (document.Total || 0) - (document.IVA || 0))}
+                  totalDocument={document.Total || 0}
+                  ivaDocument={document.IVA || 0}
+                  onTaxesSaved={onTaxesSaved}
+                />
+              )}
+
+              {/* Technical XML Note & Retry */}
+              <div className="p-3 rounded-md border border-line bg-canvas flex items-center justify-between gap-3 text-[11px] text-ink-muted">
+                <span className="truncate">
+                  {document.Grupo === 'Recibido'
+                    ? 'Factura recibida (Compra): La liquidación de retenciones se calcula directamente sobre los valores registrados en la DIAN.'
+                    : error}
+                </span>
+                {document.Grupo !== 'Recibido' && (
+                  <button
+                    type="button"
+                    onClick={() => void fetchXml()}
+                    className="px-2 py-1 rounded bg-surface hover:bg-canvas border border-line text-ink text-[11px] font-medium transition cursor-pointer inline-flex items-center gap-1 shrink-0"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Reintentar XML
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -370,6 +442,21 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
                 </div>
               </div>
 
+              <InvoiceTaxLiquidator
+                documentId={document.id || ''}
+                companyId={companyId}
+                thirdPartyIdentifier={String(
+                  document.Grupo === 'Emitido' ? document['NIT Receptor'] : document['NIT Emisor']
+                )}
+                thirdPartyName={String(
+                  document.Grupo === 'Emitido' ? document['Nombre Receptor'] : document['Nombre Emisor']
+                )}
+                defaultBase={document.baseCalculada || data.invoice.totals.lineExtensionAmount || (document.Total - (document.IVA || 0))}
+                totalDocument={document.Total || data.invoice.totals.payableAmount}
+                ivaDocument={document.IVA || (data.invoice.totals.taxInclusiveAmount - data.invoice.totals.taxExclusiveAmount)}
+                onTaxesSaved={onTaxesSaved}
+              />
+
               {/* CUFE Box & Compliance */}
               <div className="p-3.5 rounded-card border border-line bg-canvas space-y-2">
                 <div className="flex items-center justify-between">
@@ -415,15 +502,36 @@ export const InvoiceViewerModal: React.FC<Props> = ({ document, companyId, onClo
         </div>
 
         {/* Modal Footer */}
-        <div className="flex items-center justify-end px-6 py-3 border-t border-line bg-canvas text-[11px] text-ink-muted">
-          
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-1.5 rounded-md bg-surface hover:bg-canvas border border-line text-ink font-medium transition cursor-pointer"
-          >
-            Cerrar
-          </button>
+        <div className="flex items-center justify-between px-6 py-3 border-t border-line bg-canvas text-[11px] text-ink-muted">
+          <div>
+            {syncResult && (
+              <span className={`text-[12px] font-medium ${syncResult.success ? 'text-emerald-700' : 'text-rose-700'}`}>
+                {syncResult.message}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSyncToSiigo}
+              disabled={syncingToSiigo || document.match_status === 'MATCHED'}
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium transition cursor-pointer text-white shadow-xs ${
+                document.match_status === 'MATCHED'
+                  ? 'bg-ink-muted/50 cursor-not-allowed'
+                  : 'bg-emerald-600 hover:bg-emerald-700'
+              }`}
+            >
+              {syncingToSiigo ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
+              {document.match_status === 'MATCHED' ? 'Sincronizado con Siigo' : syncingToSiigo ? 'Subiendo a Siigo...' : 'Subir a Siigo (Comprobante)'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-3 py-1.5 rounded-md bg-surface hover:bg-canvas border border-line text-ink font-medium transition cursor-pointer"
+            >
+              Cerrar
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -36,6 +36,7 @@ import { allowedOrigins, CSRF_HEADER } from '../auth/constants.js';
 import { audit } from '../auth/service.js';
 import { registerAuthRoutes } from './authRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
+import { registerTaxRoutes } from './taxRoutes.js';
 import { HttpError } from './errors.js';
 import {
   QueryError,
@@ -184,6 +185,7 @@ export async function buildServer(
 
   await registerAuthRoutes(app, db, guards);
   registerAdminRoutes(app, db, guards);
+  registerTaxRoutes(app, db, guards);
 
   app.get('/api/health', async () => ({ ok: true, now: new Date().toISOString() }));
 
@@ -972,6 +974,777 @@ export async function buildServer(
     },
   );
 
+  /* ---------------------------------------------------------------- */
+  /* Catálogo de Tipos de Documento/Comprobante de Siigo              */
+  /* ---------------------------------------------------------------- */
+  app.get(
+    '/api/companies/:companyId/integrations/siigo/document-types',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { type } = req.query as { type?: string };
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+      const siigoClient = resolved.client as any;
+      try {
+        const types = await siigoClient.catalogs.documentTypes({ type: type || 'CC' });
+        return { document_types: types || [] };
+      } catch (err: any) {
+        throw new HttpError(502, 'ERROR_CATALOGO_SIIGO', `Error consultando tipos de documento de Siigo: ${err?.message || String(err)}`);
+      }
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Plan de Cuentas (PUC / Accounting Accounts)                      */
+  /* ---------------------------------------------------------------- */
+  app.get(
+    '/api/companies/:companyId/accounting-accounts',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('integrations.read')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { activeOnly, category } = req.query as { activeOnly?: string; category?: string };
+
+      let query = db
+        .selectFrom('accounting_accounts')
+        .selectAll()
+        .where('company_id', '=', companyId);
+
+      if (activeOnly === 'true') {
+        query = query.where('is_active', '=', true);
+      }
+      if (category) {
+        query = query.where('category', '=', category);
+      }
+
+      const accounts = await query.orderBy('code', 'asc').execute();
+      return { accounts };
+    },
+  );
+
+  app.patch(
+    '/api/companies/:companyId/accounting-accounts/toggle-all',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('integrations.configure')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { is_active, category } = req.body as { is_active: boolean; category?: string };
+
+      let query = db
+        .updateTable('accounting_accounts')
+        .set({ is_active, updated_at: new Date() })
+        .where('company_id', '=', companyId);
+
+      if (category && category !== 'ALL') {
+        if (category === 'EXPENSE') {
+          query = query.where((eb) =>
+            eb.or([
+              eb('code', 'like', '5%'),
+              eb('code', 'like', '6%'),
+              eb('code', 'like', '7%'),
+            ])
+          );
+        } else if (category === 'LIABILITY') {
+          query = query.where('code', 'like', '2%');
+        } else if (category === 'ASSET') {
+          query = query.where('code', 'like', '1%');
+        } else if (category === 'REVENUE') {
+          query = query.where('code', 'like', '4%');
+        }
+      }
+
+      await query.execute();
+      return { success: true };
+    },
+  );
+
+  app.patch(
+    '/api/companies/:companyId/accounting-accounts/:id/toggle',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('integrations.configure')],
+    },
+    async (req) => {
+      const { companyId, id } = req.params as { companyId: string; id: string };
+      const { is_active } = req.body as { is_active: boolean };
+
+      await db
+        .updateTable('accounting_accounts')
+        .set({ is_active, updated_at: new Date() })
+        .where('id', '=', id)
+        .where('company_id', '=', companyId)
+        .execute();
+
+      return { success: true };
+    },
+  );
+
+  app.post(
+    '/api/companies/:companyId/integrations/siigo/sync-accounts',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+      const siigoClient = resolved.client as any;
+
+      try {
+        const currentYear = new Date().getFullYear();
+        // 1. Solicitar a Siigo el reporte de balance de prueba
+        const report = await siigoClient.reports.testBalance({
+          year: currentYear,
+          month_start: 1,
+          month_end: 12,
+          includes_tax_difference: true,
+        });
+
+        if (!report || !report.file_url) {
+          throw new HttpError(502, 'ERROR_REPORTE_SIIGO', 'Siigo no devolvió la URL del archivo de balance.');
+        }
+
+        // 2. Descargar el archivo Excel
+        const fileResponse = await fetch(report.file_url);
+        if (!fileResponse.ok) {
+          throw new HttpError(502, 'ERROR_DESCARGA_EXCEL', 'No se pudo descargar el archivo Excel de Siigo.');
+        }
+
+        const arrayBuffer = await fileResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const XLSX = await import('xlsx');
+        const wb = XLSX.read(buffer, { type: 'buffer' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        sheet['!ref'] = 'A1:Z10000';
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
+
+        // 3. Extraer cuentas auxiliares transaccionales (Nivel: Auxiliar, Transaccional: Sí)
+        const accountsToUpsert = new Map<string, { code: string; name: string; level: string; category: string }>();
+
+        for (let i = 8; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row) continue;
+          const level = String(row[0] || '').trim();
+          const code = String(row[2] || '').trim();
+          const name = String(row[3] || '').trim();
+
+          // Filtrar por Nivel Auxiliar y código numérico válido
+          if (level === 'Auxiliar' && code && /^\d+$/.test(code)) {
+            let cat = 'OTHER';
+            if (code.startsWith('1')) cat = 'ASSET';
+            else if (code.startsWith('2')) cat = 'LIABILITY';
+            else if (code.startsWith('3')) cat = 'EQUITY';
+            else if (code.startsWith('4')) cat = 'REVENUE';
+            else if (code.startsWith('5') || code.startsWith('6') || code.startsWith('7')) cat = 'EXPENSE';
+
+            accountsToUpsert.set(code, {
+              code,
+              name: name || `Cuenta ${code}`,
+              level,
+              category: cat,
+            });
+          }
+        }
+
+        // 4. Guardar en base de datos
+        let inserted = 0;
+        let updated = 0;
+
+        for (const item of accountsToUpsert.values()) {
+          const existing = await db
+            .selectFrom('accounting_accounts')
+            .select(['id'])
+            .where('company_id', '=', companyId)
+            .where('code', '=', item.code)
+            .executeTakeFirst();
+
+          if (existing) {
+            await db
+              .updateTable('accounting_accounts')
+              .set({
+                name: item.name,
+                level: item.level,
+                category: item.category,
+                updated_at: new Date(),
+              })
+              .where('id', '=', existing.id)
+              .execute();
+            updated++;
+          } else {
+            await db
+              .insertInto('accounting_accounts')
+              .values({
+                company_id: companyId,
+                code: item.code,
+                name: item.name,
+                level: item.level,
+                category: item.category,
+                is_transactional: true,
+                is_active: false,
+              })
+              .execute();
+            inserted++;
+          }
+        }
+
+        return {
+          success: true,
+          total_synced: accountsToUpsert.size,
+          inserted,
+          updated,
+        };
+      } catch (err: any) {
+        req.log.error({ err }, 'Error sincronizando cuentas contables desde Siigo');
+        throw new HttpError(502, 'ERROR_SYNC_CUENTAS', `Error sincronizando cuentas desde Siigo: ${err.message || String(err)}`);
+      }
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Emisión / Sincronización de Factura o Compra a Siigo             */
+  /* ---------------------------------------------------------------- */
+  app.post(
+    '/api/companies/:companyId/documents/:documentId/sync-to-siigo',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+
+      // 1. Obtener documento y terceros
+      const doc = await db
+        .selectFrom('documents')
+        .leftJoin('third_parties as issuer', 'issuer.id', 'documents.issuer_id')
+        .leftJoin('third_parties as receiver', 'receiver.id', 'documents.receiver_id')
+        .selectAll('documents')
+        .select([
+          'issuer.tax_id as issuer_nit',
+          'issuer.legal_name as issuer_name',
+          'receiver.tax_id as receiver_nit',
+          'receiver.legal_name as receiver_name',
+        ])
+        .where('documents.id', '=', documentId)
+        .where('documents.company_id', '=', companyId)
+        .executeTakeFirst();
+
+      if (!doc) {
+        throw new HttpError(404, 'DOCUMENTO_NO_ENCONTRADO', 'Documento no encontrado.');
+      }
+
+      // 2. Obtener cliente Siigo
+      const resolved = await integrations.getClient(companyId, 'SIIGO');
+      const siigoClient = resolved.client as any;
+
+      // 3. Determinar tercero y dirección
+      const isPurchase = doc.direction === 'RECEIVED';
+      const thirdPartyId = isPurchase ? doc.issuer_id : doc.receiver_id;
+      const thirdPartyNit = isPurchase ? doc.issuer_nit : doc.receiver_nit;
+
+      if (!thirdPartyNit) {
+        throw new HttpError(400, 'TERCERO_SIN_NIT', 'El tercero del documento no tiene NIT.');
+      }
+
+      // 4. Obtener determinaciones de impuestos
+      const determinations = await db
+        .selectFrom('document_tax_determinations as d')
+        .innerJoin('tax_types as tt', 'tt.id', 'd.tax_type_id')
+        .selectAll('d')
+        .select(['tt.code as tax_type_code', 'tt.name as tax_type_name'])
+        .where('d.document_id', '=', documentId)
+        .where('d.company_id', '=', companyId)
+        .execute();
+
+      // 5. Obtener reglas de cuenta contable del tercero y de la empresa
+      const tpRules = thirdPartyId
+        ? await db
+            .selectFrom('third_party_tax_rules')
+            .selectAll()
+            .where('company_id', '=', companyId)
+            .where('third_party_id', '=', thirdPartyId)
+            .execute()
+        : [];
+
+      const companyConfigs = await db
+        .selectFrom('company_tax_configurations')
+        .selectAll()
+        .where('company_id', '=', companyId)
+        .execute();
+
+      // Perfil del tercero para cuentas de gasto / contrapartida y por pagar
+      const tpProfile = thirdPartyId
+        ? await db
+            .selectFrom('third_party_tax_profiles')
+            .selectAll()
+            .where('company_id', '=', companyId)
+            .where('third_party_id', '=', thirdPartyId)
+            .orderBy('valid_from', 'desc')
+            .executeTakeFirst()
+        : null;
+
+      // 6. Preparar líneas del comprobante contable (Journal)
+      // Tipo de comprobante en Siigo:
+      // Prioridad 1: Configuración específica del tercero (document_type_id)
+      // Prioridad 2: Setting de la empresa (siigo.purchase_voucher_type_id)
+      // Prioridad 3: Buscar comprobante CC-16 ("CAUSACION CUENTAS POR PAGAR" id 43000) o primer CC
+      let documentTypeId = tpProfile?.document_type_id ?? null;
+
+      if (!documentTypeId) {
+        // Intentar leer de settings de la empresa
+        const compSetting = await db
+          .selectFrom('settings')
+          .select(['value'])
+          .where('company_id', '=', companyId)
+          .where('scope', '=', 'siigo')
+          .where('key', '=', 'purchase_voucher_type_id')
+          .executeTakeFirst();
+
+        if (compSetting?.value && Number(compSetting.value)) {
+          documentTypeId = Number(compSetting.value);
+        }
+      }
+
+      if (!documentTypeId) {
+        try {
+          const docTypes = await siigoClient.catalogs.documentTypes({ type: 'CC' });
+          if (docTypes && docTypes.length > 0) {
+            // Buscar CC-16 (CAUSACION CUENTAS POR PAGAR)
+            const cc16 = docTypes.find((dt: any) => String(dt.code) === '16' || String(dt.id) === '43000');
+            documentTypeId = cc16 ? cc16.id : docTypes[0].id;
+          }
+        } catch {
+          documentTypeId = 43000; // Default CC-16 en Siigo
+        }
+      }
+
+      if (!documentTypeId) {
+        documentTypeId = 43000;
+      }
+
+      // Catálogo de impuestos en Siigo para enlazar retenciones requeridas
+      let siigoTaxes: any[] = [];
+      try {
+        siigoTaxes = await siigoClient.catalogs.taxes();
+      } catch {
+        // ignorar si falla
+      }
+
+      const totalDoc = Number(doc.total ?? 0);
+      const docDate = doc.issued_at ? String(doc.issued_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
+      const docPrefix = doc.prefix || 'FE';
+      const docFolioNum = parseInt(String(doc.folio || '1').replace(/\D/g, ''), 10) || 1;
+      const folioStr = doc.prefix ? `${doc.prefix}-${doc.folio}` : (doc.folio || doc.external_uid || documentId);
+
+      const items: any[] = [];
+      let totalRetenciones = 0;
+
+      // Líneas de retenciones calculadas
+      for (const det of determinations) {
+        const amount = Number(det.amount);
+        if (amount <= 0) continue;
+
+        const tpRule = tpRules.find((r) => r.tax_type_id === det.tax_type_id);
+        const compRule = companyConfigs.find((c) => c.tax_type_id === det.tax_type_id);
+
+        let accountCode =
+          tpRule?.accounting_account ||
+          compRule?.accounting_account;
+
+        // Si no hay cuenta explícita configurada, sugerir/mapear inteligentemente según la tarifa y tipo
+        if (!accountCode) {
+          const numRate = Number(det.rate);
+          if (det.tax_type_code.includes('RENTA')) {
+            if (Math.abs(numRate - 0.04) < 0.001) accountCode = '23652503'; // Servicios 4%
+            else if (Math.abs(numRate - 0.06) < 0.001) accountCode = '23652501'; // Servicios 6%
+            else if (Math.abs(numRate - 0.01) < 0.001) accountCode = '23652505'; // Servicios 1%
+            else if (Math.abs(numRate - 0.035) < 0.001) accountCode = '23654004'; // Compras 3.5%
+            else if (Math.abs(numRate - 0.025) < 0.001) accountCode = '23654001'; // Compras 2.5%
+            else if (Math.abs(numRate - 0.11) < 0.001 || Math.abs(numRate - 0.10) < 0.001) accountCode = '23651501'; // Honorarios
+            else accountCode = isPurchase ? '23654001' : '13551501';
+          } else if (det.tax_type_code.includes('ICA')) {
+            if (Math.abs(numRate - 0.00966) < 0.0001) accountCode = '23680505'; // Reteica 9.66
+            else if (Math.abs(numRate - 0.00866) < 0.0001) accountCode = '23680501'; // Reteica 8.66
+            else if (Math.abs(numRate - 0.01104) < 0.0001) accountCode = '23680502'; // Reteica 11.04
+            else accountCode = '23680505';
+          } else {
+            accountCode = isPurchase ? '23654001' : '13551501';
+          }
+        }
+
+        // Mapear impuesto de Siigo por porcentaje/tipo si la cuenta lo requiere
+        // Nota: para ICA la tarifa en det.rate viene por mil (ej. 0.00866 = 8.66 por mil)
+        const ratePercent = Number(det.rate) <= 0.05
+          ? Number(det.rate) * 1000 // Si es menor a 0.05 (ej. 0.00866 o 0.01104), probar por mil (8.66 o 11.04)
+          : Number(det.rate) <= 1
+          ? Number(det.rate) * 100
+          : Number(det.rate);
+
+        const matchedTax = siigoTaxes.find((st) => {
+          if (det.tax_type_code.includes('ICA')) {
+            // Comparar contra 8.66, 11.04, 9.66 o contra porcentaje directo
+            return st.type === 'ReteICA' && (
+              Math.abs(st.percentage - ratePercent) < 0.1 ||
+              Math.abs(st.percentage - Number(det.rate) * 1000) < 0.1 ||
+              Math.abs(st.percentage - Number(det.rate) * 100) < 0.1
+            );
+          }
+          if (det.tax_type_code.includes('RENTA')) {
+            return st.type === 'Retefuente' && (
+              Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1
+            );
+          }
+          if (det.tax_type_code.includes('IVA')) {
+            return st.type === 'ReteIVA' && Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1;
+          }
+          return false;
+        });
+
+        const retItem: any = {
+          account: {
+            code: accountCode,
+            movement: isPurchase ? 'Credit' : 'Debit',
+          },
+          customer: {
+            identification: thirdPartyNit,
+            branch_office: 0,
+          },
+          description: `Retención ${det.tax_type_name} Factura ${folioStr}`,
+          value: amount,
+        };
+
+        if (matchedTax) {
+          retItem.tax = { id: matchedTax.id };
+        }
+
+        items.push(retItem);
+        totalRetenciones += amount;
+      }
+
+      // Cuenta de gasto/contrapartida (ej. 51103001) y cuenta por pagar/cobrar
+      const expenseAccount = doc.expense_account || tpProfile?.expense_account;
+      if (!expenseAccount) {
+        throw new HttpError(
+          400,
+          'CUENTA_GASTO_NO_CONFIGURADA',
+          `El tercero ${doc.issuer_name || thirdPartyNit} no tiene configurada la Cuenta Contable de Gasto/Contrapartida (ej. 51103001) en su Perfil Tributario ni en la factura. Por favor parametrice la cuenta antes de sincronizar.`,
+        );
+      }
+
+      const payableAccount = tpProfile?.payable_account || (isPurchase ? '22050501' : '13050501');
+
+      // Consultar impuestos de la factura para separar IVA descontable (2408)
+      const docTaxes = await db
+        .selectFrom('document_taxes as dt')
+        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
+        .select(['dt.amount', 'tt.code as tax_code'])
+        .where('dt.document_id', '=', documentId)
+        .execute();
+
+      const ivaTax = docTaxes.find((t) => t.tax_code === '01' || t.tax_code === 'IVA');
+      const ivaAmount = ivaTax ? Number(ivaTax.amount) : 0;
+      const baseGasto = totalDoc - ivaAmount;
+
+      // Base gravable / Gasto
+      const netoPagar = totalDoc - totalRetenciones;
+
+      items.push({
+        account: {
+          code: expenseAccount,
+          movement: isPurchase ? 'Debit' : 'Credit',
+        },
+        customer: {
+          identification: thirdPartyNit,
+          branch_office: 0,
+        },
+        description: `Gasto Factura ${folioStr}`,
+        value: baseGasto,
+      });
+
+      // Si la factura tiene IVA, registrar línea de IVA Descontable
+      if (ivaAmount > 0) {
+        const vatAccount = doc.iva_account || tpProfile?.iva_account || (isPurchase ? '24081501' : '24080501');
+        const ivaRate = baseGasto > 0 ? (ivaAmount / baseGasto) * 100 : 19;
+        
+        // Enlazar el impuesto de IVA en Siigo correspondiente a la tarifa (ej. 19% -> 6499 o 21284, 5% -> 6500)
+        const matchedIva = siigoTaxes.find((st) => {
+          if (st.type !== 'IVA') return false;
+          if (vatAccount === '24081501' && st.id === 21284) return true; // IVA 19% Servicios
+          return Math.abs(st.percentage - ivaRate) < 1;
+        }) || siigoTaxes.find((st) => st.type === 'IVA' && Math.abs(st.percentage - 19) < 1);
+
+        const ivaItem: any = {
+          account: {
+            code: vatAccount,
+            movement: isPurchase ? 'Debit' : 'Credit',
+          },
+          customer: {
+            identification: thirdPartyNit,
+            branch_office: 0,
+          },
+          description: `IVA Factura ${folioStr}`,
+          value: ivaAmount,
+        };
+
+        if (matchedIva) {
+          ivaItem.tax = { id: matchedIva.id };
+        }
+
+        items.push(ivaItem);
+      }
+
+      // Cuenta por pagar proveedor (o por cobrar cliente) con objeto "due" obligatorio en Siigo
+      items.push({
+        account: {
+          code: payableAccount,
+          movement: isPurchase ? 'Credit' : 'Debit',
+        },
+        customer: {
+          identification: thirdPartyNit,
+          branch_office: 0,
+        },
+        description: `Neto Factura ${folioStr}`,
+        value: netoPagar,
+        due: {
+          prefix: docPrefix,
+          consecutive: docFolioNum,
+          quote: 1,
+          date: docDate,
+        },
+      });
+
+      // 7. Enviar a Siigo mediante Journals (Comprobante Contable)
+      try {
+        const journal = await siigoClient.journals.create({
+          document: { id: documentTypeId },
+          date: docDate,
+          items,
+          observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
+        });
+
+        // 8. Guardar match y actualizar estado
+        const chosen = await pickIntegration(companyId, 'SIIGO');
+        const journalId = journal.id || String(journal.number || Date.now());
+        const extId = `SIIGO:JOURNAL:${journalId}`;
+
+        await db
+          .insertInto('document_integration_matches')
+          .values({
+            company_id: companyId,
+            document_id: documentId,
+            company_integration_id: chosen.id,
+            external_id: extId,
+            external_number: journal.number ? String(journal.number) : extId,
+            external_document_type: 'Journal',
+            match_status: 'MATCHED',
+            confidence: 1.0,
+            last_checked_at: new Date(),
+            matched_at: new Date(),
+            external_payload: journal,
+          })
+          .onConflict((oc) =>
+            oc.columns(['company_integration_id', 'document_id']).doUpdateSet({
+              external_id: extId,
+              external_number: journal.number ? String(journal.number) : extId,
+              external_document_type: 'Journal',
+              match_status: 'MATCHED',
+              confidence: 1.0,
+              last_checked_at: new Date(),
+              matched_at: new Date(),
+              external_payload: journal,
+            }),
+          )
+          .execute();
+
+        return {
+          success: true,
+          external_id: extId,
+          number: journal.number,
+          message: `Factura sincronizada exitosamente en Siigo como Comprobante No. ${journal.number ?? journalId}`,
+        };
+      } catch (err: any) {
+        req.log.error({ err, items, docDate, documentTypeId }, 'Error emitiendo a Siigo');
+        const detail = err?.details ? JSON.stringify(err.details) : err?.message || String(err);
+        throw new HttpError(
+          502,
+          'ERROR_EMISION_SIIGO',
+          `Error emitiendo a Siigo: ${detail}`,
+        );
+      }
+    },
+  );
+
+
+  /* ---------------------------------------------------------------- */
+  /* Impuestos y Retenciones del Documento                            */
+  /* ---------------------------------------------------------------- */
+
+  const updateDocumentTaxesBody = z.object({
+    taxes: z.array(
+      z.object({
+        tax_code: z.string(),
+        taxable_base: z.number().nonnegative(),
+        rate: z.number().nullable().optional(),
+        amount: z.number().nonnegative(),
+      }),
+    ),
+  });
+
+  const companyDocParams = companyParams.extend({ documentId: z.string().uuid() });
+
+  app.get(
+    '/api/companies/:companyId/documents/:documentId/taxes',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = parseBody(companyDocParams, req.params);
+      const doc = await db
+        .selectFrom('documents')
+        .select(['id', 'expense_account', 'payment_account', 'iva_account'])
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .executeTakeFirst();
+      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+      const rows = await db
+        .selectFrom('document_taxes as dt')
+        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
+        .select(['tt.code as tax_code', 'tt.name as tax_name', 'dt.taxable_base', 'dt.rate', 'dt.amount'])
+        .where('dt.document_id', '=', documentId)
+        .execute();
+
+      return {
+        document_id: documentId,
+        expense_account: doc.expense_account ?? null,
+        payment_account: doc.payment_account ?? null,
+        iva_account: doc.iva_account ?? null,
+        taxes: rows.map((r) => ({
+          tax_code: r.tax_code,
+          tax_name: r.tax_name,
+          taxable_base: Number(r.taxable_base ?? 0),
+          rate: r.rate !== null ? Number(r.rate) : null,
+          amount: Number(r.amount),
+        })),
+      };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Actualizar cuenta de IVA descontable (PUC) de un documento       */
+  /* ---------------------------------------------------------------- */
+  app.patch(
+    '/api/companies/:companyId/documents/:documentId/iva-account',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+      const { iva_account } = req.body as { iva_account?: string | null };
+
+      await db
+        .updateTable('documents')
+        .set({
+          iva_account: iva_account?.trim() || null,
+        })
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .execute();
+
+      return { success: true, iva_account: iva_account?.trim() || null };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Actualizar cuenta de pago / tesorería (PUC) de un documento      */
+  /* ---------------------------------------------------------------- */
+  app.patch(
+    '/api/companies/:companyId/documents/:documentId/payment-account',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+      const { payment_account } = req.body as { payment_account?: string | null };
+
+      await db
+        .updateTable('documents')
+        .set({
+          payment_account: payment_account?.trim() || null,
+        })
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .execute();
+
+      return { success: true, payment_account: payment_account?.trim() || null };
+    },
+  );
+
+  app.put(
+    '/api/companies/:companyId/documents/:documentId/taxes',
+    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    async (req) => {
+      const { companyId, documentId } = parseBody(companyDocParams, req.params);
+      const body = parseBody(updateDocumentTaxesBody, req.body);
+
+      const doc = await db
+        .selectFrom('documents')
+        .select(['id'])
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .executeTakeFirst();
+      if (!doc) throw new HttpError(404, 'NO_ENCONTRADO', 'Documento no encontrado.');
+
+      const allTaxTypes = await db
+        .selectFrom('tax_types')
+        .select(['id', 'code'])
+        .execute();
+      const taxTypeMap = new Map(allTaxTypes.map((t) => [t.code, t.id]));
+
+      const managedCodes = ['RENTA_RETE', 'ICA_RETE', 'IVA_RETE'];
+      const managedTypeIds: string[] = managedCodes
+        .map((c) => taxTypeMap.get(c))
+        .filter((id): id is string => typeof id === 'string');
+
+      await db.transaction().execute(async (trx) => {
+        if (managedTypeIds.length > 0) {
+          await trx
+            .deleteFrom('document_taxes')
+            .where('document_id', '=', documentId)
+            .where('tax_type_id', 'in', managedTypeIds)
+            .execute();
+        }
+
+        for (const item of body.taxes) {
+          const typeId = taxTypeMap.get(item.tax_code);
+          if (!typeId || item.amount <= 0) continue;
+
+          await trx
+            .insertInto('document_taxes')
+            .values({
+              document_id: documentId,
+              tax_type_id: typeId,
+              taxable_base: sql`${item.taxable_base}::numeric`,
+              rate: item.rate !== null && item.rate !== undefined ? sql`${item.rate}::numeric` : null,
+              amount: sql`${item.amount}::numeric`,
+            })
+            .execute();
+        }
+      });
+
+      const updated = await db
+        .selectFrom('document_taxes as dt')
+        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
+        .select(['tt.code as tax_code', 'tt.name as tax_name', 'dt.taxable_base', 'dt.rate', 'dt.amount'])
+        .where('dt.document_id', '=', documentId)
+        .execute();
+
+      return {
+        document_id: documentId,
+        taxes: updated.map((r) => ({
+          tax_code: r.tax_code,
+          tax_name: r.tax_name,
+          taxable_base: Number(r.taxable_base ?? 0),
+          rate: r.rate !== null ? Number(r.rate) : null,
+          amount: Number(r.amount),
+        })),
+      };
+    },
+  );
 
   /* ---------------------------------------------------------------- */
   /* Sincronización                                                    */

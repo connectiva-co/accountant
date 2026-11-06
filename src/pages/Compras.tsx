@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useApp } from '../state/app-context';
 import { PageHeader } from '../components/ui/PageHeader';
 import { DataTable } from '../components/ui/DataTable';
@@ -6,11 +6,18 @@ import { StatStrip } from '../components/ui/StatStrip';
 import { filterRecords } from '../utils/radianEngine';
 import { invoiceColumns } from '../utils/columns';
 import { formatCurrency, formatNumber } from '../utils/formatters';
+import { InvoiceViewerModal } from '../components/ui/InvoiceViewerModal';
+import type { RadianRecord } from '../types/radian';
 
 export const Compras: React.FC = () => {
-  const { periodRecords, period, filters, setFilters, kpis } = useApp();
+  const { periodRecords, period, filters, setFilters, kpis, selectedCompanyId, reloadDataset } = useApp();
+  const [selectedRecord, setSelectedRecord] = useState<RadianRecord | null>(null);
+
   const rows = useMemo(() => filterRecords(periodRecords, 'compras'), [periodRecords]);
-  const columns = useMemo(() => invoiceColumns('emisor'), []);
+  const columns = useMemo(
+    () => invoiceColumns('emisor', (record) => setSelectedRecord(record)),
+    []
+  );
 
   return (
     <>
@@ -43,7 +50,17 @@ export const Compras: React.FC = () => {
         searchPlaceholder="Buscar por folio, proveedor o NIT..."
         emptyTitle="Sin facturas de compra"
         emptyDescription="No hay facturas recibidas que coincidan con los filtros del periodo."
+        onRowClick={(record) => setSelectedRecord(record)}
       />
+
+      {selectedRecord && selectedCompanyId && (
+        <InvoiceViewerModal
+          document={selectedRecord}
+          companyId={selectedCompanyId}
+          onClose={() => setSelectedRecord(null)}
+          onTaxesSaved={() => void reloadDataset()}
+        />
+      )}
     </>
   );
 };

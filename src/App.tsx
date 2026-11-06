@@ -123,7 +123,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ label = 'Cargando sesi√≥n‚Ä
       <div className="w-52 h-52 sm:w-64 sm:h-64 flex items-center justify-center">
         <Lottie src={splashAnimation} loop={true} autoplay={true} className="w-full h-full" />
       </div>
-      <span className="text-xs text-ink-muted font-medium tracking-wide animate-pulse">{label}</span>
+      <span className="text-xs text-ink-muted font-medium tracking-wide">{label}</span>
     </div>
   </div>
 );

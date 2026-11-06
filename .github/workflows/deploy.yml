@@ -1,0 +1,120 @@
+name: Deploy Accountant - CT Demo
+
+on:
+  push:
+    branches:
+      - main
+      - features/retencion
+  workflow_dispatch:
+
+concurrency:
+  group: accountant-prod
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # 1. BUILD EN GITHUB RUNNERS (RÁPIDO Y AISLADO)
+  # ============================================================
+  build:
+    name: Build Frontend (GitHub Cloud)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Instalar dependencias del frontend
+        run: npm ci
+
+      - name: Compilar Frontend Vite
+        run: npm run build
+
+      - name: Empaquetar build y backend
+        run: |
+          mkdir -p /tmp/accountant-release
+          cp -r dist /tmp/accountant-release/
+          mkdir -p /tmp/accountant-release/server
+          cp -r server/src server/migrations server/package.json server/package-lock.json server/tsconfig.json /tmp/accountant-release/server/
+          tar -czf /tmp/accountant-build.tar.gz -C /tmp/accountant-release dist server
+
+      - name: Subir artefacto compilado
+        uses: actions/upload-artifact@v4
+        with:
+          name: accountant-build
+          path: /tmp/accountant-build.tar.gz
+          retention-days: 1
+
+  # ============================================================
+  # 2. DESPLIEGUE EN CT DEMO (RUNNER LOCAL)
+  # ============================================================
+  deploy:
+    name: Deploy en CT Demo
+    needs: build
+    runs-on: [self-hosted, demo]
+
+    env:
+      DEPLOY_DIR: /opt/accountant
+
+    steps:
+      - name: Limpiar temporales antiguos de build
+        run: |
+          rm -rf /tmp/accountant-build.tar.gz /tmp/accountant-build
+
+      - name: Descargar build compilado
+        uses: actions/download-artifact@v4
+        with:
+          name: accountant-build
+          path: /tmp
+
+      - name: Extraer build y actualizar /opt/accountant
+        run: |
+          echo "Descomprimiendo en $DEPLOY_DIR..."
+          sudo mkdir -p "$DEPLOY_DIR/dist" "$DEPLOY_DIR/server"
+
+          # Limpiar caché y builds viejos
+          sudo rm -rf "$DEPLOY_DIR/dist/*"
+
+          if [ -f "/tmp/accountant-build.tar.gz" ]; then
+            sudo tar -xzf /tmp/accountant-build.tar.gz -C "$DEPLOY_DIR"
+            sudo rm -f /tmp/accountant-build.tar.gz
+          elif [ -f "/tmp/accountant-build/accountant-build.tar.gz" ]; then
+            sudo tar -xzf /tmp/accountant-build/accountant-build.tar.gz -C "$DEPLOY_DIR"
+            sudo rm -rf /tmp/accountant-build
+          fi
+
+          # Asegurar dependencias del backend si hubo cambios en package.json
+          cd "$DEPLOY_DIR/server"
+          sudo npm install --omit=dev --no-audit --no-fund
+
+          # Aplicar migraciones si hay pendientes
+          sudo npm run migrate || true
+
+          # Limpiar permisos
+          sudo chown -R root:root "$DEPLOY_DIR"
+
+      - name: Reiniciar Servicio Systemd
+        run: |
+          sudo systemctl restart accountant.service
+
+      - name: Health check
+        run: |
+          echo "Verificando respuesta del servicio..."
+          sleep 3
+          for i in {1..10}; do
+            HTTP_STATUS="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3010/ || true)"
+            if [ "$HTTP_STATUS" != "000" ] && [ -n "$HTTP_STATUS" ]; then
+              echo "Accountant respondió HTTP $HTTP_STATUS"
+              echo "✅ Despliegue completado con éxito."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: Accountant no respondió."
+          sudo journalctl -u accountant -n 50 --no-pager || true
+          exit 1
+

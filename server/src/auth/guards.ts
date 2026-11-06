@@ -50,6 +50,7 @@ const PUBLIC_ROUTES: Array<{ method: string; url: string }> = [
 
 function isPublic(method: string, routeUrl: string | undefined): boolean {
   if (!routeUrl) return false;
+  if (!routeUrl.startsWith('/api')) return true;
   return PUBLIC_ROUTES.some((r) => r.method === method && r.url === routeUrl);
 }
 
@@ -59,7 +60,7 @@ function extractCompanyId(req: FastifyRequest): string | undefined {
   const params = (req.params ?? {}) as Record<string, unknown>;
   const query = (req.query ?? {}) as Record<string, unknown>;
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const raw = params.companyId ?? query.company_id ?? body.company_id;
+  const raw = params.companyId ?? params.company_id ?? query.company_id ?? query.companyId ?? body.company_id ?? body.companyId;
   if (typeof raw !== 'string' || raw.length === 0) return undefined;
   return raw;
 }
@@ -143,19 +144,54 @@ export function createGuards(db: Kysely<Database>): Guards {
 
   async function loadCompany(req: FastifyRequest, required: boolean): Promise<void> {
     const { user } = principal(req);
-    const companyId = extractCompanyId(req);
+    let companyId = extractCompanyId(req);
 
-    if (!companyId) {
-      if (required) throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
-      req.companyAccess = null;
-      return;
+    // Si viene vacío o literal 'undefined'/'null'
+    if (!companyId || companyId === 'undefined' || companyId === 'null') {
+      const firstMembership = await db
+        .selectFrom('company_memberships')
+        .select('company_id')
+        .where('user_id', '=', user.id)
+        .where('status', '=', 'ACTIVE')
+        .executeTakeFirst();
+
+      if (firstMembership) {
+        companyId = firstMembership.company_id;
+      } else if (required) {
+        throw new HttpError(400, 'SIN_EMPRESA', 'company_id es obligatorio.');
+      } else {
+        req.companyAccess = null;
+        return;
+      }
     }
+
+    // Si pasaron un NIT en vez de UUID, resolver la empresa por NIT
     if (!UUID_RE.test(companyId)) {
-      throw new HttpError(400, 'SIN_EMPRESA', 'company_id inválido.');
+      const cleanNit = companyId.replace(/\D/g, '');
+      const found = await db
+        .selectFrom('companies')
+        .select('id')
+        .where((eb) => eb.or([eb('nit', '=', companyId!), eb('nit', '=', cleanNit)]))
+        .executeTakeFirst();
+
+      if (found) {
+        companyId = found.id;
+      } else {
+        throw new HttpError(400, 'SIN_EMPRESA', 'company_id inválido.');
+      }
+    }
+
+    // Normalizar companyId resuelto en req.params y req.query
+    if (req.params && typeof req.params === 'object') {
+      (req.params as Record<string, unknown>).companyId = companyId;
+      (req.params as Record<string, unknown>).company_id = companyId;
+    }
+    if (req.query && typeof req.query === 'object') {
+      (req.query as Record<string, unknown>).companyId = companyId;
+      (req.query as Record<string, unknown>).company_id = companyId;
     }
 
     const access = await resolveCompanyAccess(db, user, companyId);
-    // 403 genérico: no revela si la empresa existe.
     if (!access) {
       throw new HttpError(403, 'SIN_ACCESO', 'No tienes acceso a esta empresa.');
     }

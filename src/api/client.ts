@@ -9,10 +9,12 @@ export type { ParsedUblInvoice };
  */
 
 const defaultApiUrl = typeof window !== 'undefined'
-  ? `${window.location.protocol}//${window.location.hostname}:3001`
+  ? (window.location.port === '5173' || window.location.port === '3000'
+      ? `${window.location.protocol}//${window.location.hostname}:3001`
+      : '')
   : 'http://localhost:3001';
 
-const BASE = (import.meta.env.VITE_API_URL || defaultApiUrl).replace(/\/+$/, '');
+const BASE = (import.meta.env.VITE_API_URL !== undefined ? import.meta.env.VITE_API_URL : defaultApiUrl).replace(/\/+$/, '');
 
 export class ApiError extends Error {
   constructor(
@@ -367,6 +369,177 @@ function jsonInit(method: string, payload?: unknown): RequestInit {
   };
 }
 
+
+export interface TaxConceptDto {
+  id: string;
+  code: string;
+  name: string;
+  tax_type_id: string;
+  tax_type_code: string;
+  tax_type_name: string;
+  description: string | null;
+  active: boolean;
+}
+
+export interface TaxResponsibilityDto {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+}
+
+export interface ThirdPartyTaxProfileDto {
+  id: string;
+  company_id: string;
+  third_party_id: string;
+  person_type: 'NATURAL' | 'JURIDICA';
+  tax_regime: 'ORDINARIO' | 'SIMPLE' | 'ESPECIAL' | 'NO_RESPONSABLE';
+  economic_activity_code: string | null;
+  ica_municipality_code: string;
+  is_declarant_renta: boolean;
+  expense_account?: string | null;
+  payable_account?: string | null;
+  payment_account?: string | null;
+  iva_account?: string | null;
+  document_type_id?: number | null;
+  valid_from: string;
+  valid_to: string;
+  responsibilities: Array<{
+    id: string;
+    code: string;
+    name: string;
+    description: string | null;
+  }>;
+}
+
+export interface UpsertTaxProfileInput {
+  person_type: 'NATURAL' | 'JURIDICA';
+  tax_regime: 'ORDINARIO' | 'SIMPLE' | 'ESPECIAL' | 'NO_RESPONSABLE';
+  economic_activity_code?: string | null;
+  ica_municipality_code: string;
+  is_declarant_renta: boolean;
+  expense_account?: string | null;
+  payable_account?: string | null;
+  payment_account?: string | null;
+  iva_account?: string | null;
+  document_type_id?: number | null;
+  responsibility_ids: string[];
+  valid_from?: string;
+  valid_to?: string;
+}
+
+export interface AccountingAccountDto {
+  id: string;
+  company_id: string;
+  code: string;
+  name: string;
+  level: string;
+  is_transactional: boolean;
+  is_active: boolean;
+  category: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiigoDocumentTypeDto {
+  id: number;
+  company_id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  type: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaxDeterminationDto {
+  id?: string;
+  tax_type_id?: string;
+  taxTypeId?: string;
+  tax_type_code?: string;
+  taxTypeCode?: string;
+  tax_type_name?: string;
+  taxTypeName?: string;
+  tax_concept_id?: string | null;
+  taxConceptId?: string | null;
+  tax_concept_code?: string | null;
+  taxConceptCode?: string | null;
+  tax_concept_name?: string | null;
+  taxConceptName?: string | null;
+  tax_rule_id?: string | null;
+  taxRuleId?: string | null;
+  taxable_base?: number;
+  taxableBase?: number;
+  rate: number;
+  amount: number;
+  status: 'CALCULATED' | 'EXEMPT' | 'NOT_APPLICABLE' | 'MISSING_PROFILE' | 'NO_MATCHING_RULE' | 'REQUIRES_REVIEW' | 'MANUALLY_OVERRIDDEN';
+  source: 'ENGINE' | 'MANUAL';
+  explanation: string;
+  legalReference?: string | null;
+  override_reason?: string | null;
+  overrideReason?: string | null;
+  override_rate?: number | null;
+  override_amount?: number | null;
+  profileSnapshot?: Record<string, unknown>;
+  ruleSnapshot?: Record<string, unknown>;
+}
+
+export interface CompanyTaxConfigurationDto {
+  id: string;
+  company_id: string;
+  tax_type_id: string;
+  tax_type_code: string;
+  tax_type_name: string;
+  operation_type: 'ISSUED' | 'RECEIVED' | 'ALL';
+  document_category: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+  is_enabled: boolean;
+  default_rate: number | null;
+  rate_basis: 'PERCENT' | 'PER_MILLE';
+  default_concept_id: string | null;
+  default_concept_name?: string | null;
+  accounting_account?: string | null;
+  min_base_cop: number;
+  metadata?: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ThirdPartyTaxRuleDto {
+  id: string;
+  company_id: string;
+  third_party_id: string;
+  tax_type_id: string;
+  tax_type_code: string;
+  tax_type_name: string;
+  operation_type: 'ISSUED' | 'RECEIVED' | 'ALL';
+  document_category: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+  is_exempt: boolean;
+  custom_rate: number | null;
+  rate_basis: 'PERCENT' | 'PER_MILLE';
+  custom_concept_id: string | null;
+  custom_concept_name?: string | null;
+  accounting_account?: string | null;
+  municipality_code: string | null;
+  notes: string | null;
+  valid_from: string;
+  valid_to: string;
+  created_at: string;
+  updated_at: string;
+}
+
+
+function resolveEffectiveCompanyId(companyId?: string | null): string {
+  if (companyId && companyId !== 'undefined' && companyId !== 'null') return companyId;
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('accountant_selected_company_id');
+      if (stored) return stored;
+    } catch {}
+  }
+  return 'c92e7f20-3aff-4c6d-860e-795bbf5c061d';
+}
+
 export const api = {
   baseUrl: BASE,
 
@@ -603,13 +776,317 @@ export const api = {
       `/api/companies/${companyId}/sync/conflicts${options.status ? `?status=${options.status}` : ''}`,
     ),
 
-  getDocumentXml: (companyId: string, documentId: string) =>
-    request<{
+  getDocumentXml: (companyId: string | null | undefined, documentId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{
       document_id: string;
       siigo_invoice_id: string;
       invoice: ParsedUblInvoice;
       raw_xml: string;
-    }>(`/api/companies/${companyId}/documents/${documentId}/xml`),
+    }>(`/api/companies/${cId}/documents/${documentId}/xml`);
+  },
+
+  getSiigoDocumentTypes: (companyId: string | null | undefined, options?: { type?: string; activeOnly?: boolean }) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    const type = options?.type || 'CC';
+    const active = options?.activeOnly ? '&activeOnly=true' : '';
+    return request<{ document_types: Array<{ id: number; code: string; name: string; description?: string; is_active?: boolean }> }>(
+      `/api/companies/${cId}/integrations/siigo/document-types?type=${type}${active}`
+    );
+  },
+
+  toggleSiigoDocumentType: (companyId: string | null | undefined, id: number, is_active: boolean) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/integrations/siigo/document-types/${id}/toggle`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active }),
+    });
+  },
+
+  toggleAllSiigoDocumentTypes: (companyId: string | null | undefined, is_active: boolean, type?: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/integrations/siigo/document-types/toggle-all`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active, type }),
+    });
+  },
+
+  syncSiigoDocumentTypes: (companyId: string | null | undefined, type: string = 'CC') => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean; total: number; inserted: number; updated: number }>(
+      `/api/companies/${cId}/integrations/siigo/sync-document-types`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) }
+    );
+  },
+
+  getAccountingAccounts: (companyId: string | null | undefined, options?: { activeOnly?: boolean; category?: string }) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    const params = new URLSearchParams();
+    if (options?.activeOnly) params.set('activeOnly', 'true');
+    if (options?.category) params.set('category', options.category);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return request<{ accounts: AccountingAccountDto[] }>(`/api/companies/${cId}/accounting-accounts${qs}`);
+  },
+
+  toggleAccountingAccount: (companyId: string | null | undefined, id: string, is_active: boolean) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/accounting-accounts/${id}/toggle`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active }),
+    });
+  },
+
+  toggleAllAccountingAccounts: (companyId: string | null | undefined, is_active: boolean, category?: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(`/api/companies/${cId}/accounting-accounts/toggle-all`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_active, category }),
+    });
+  },
+
+  syncAccountingAccountsFromSiigo: (companyId: string | null | undefined) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean; total_synced: number; inserted: number; updated: number }>(
+      `/api/companies/${cId}/integrations/siigo/sync-accounts`,
+      { method: 'POST' }
+    );
+  },
+
+
+  getTaxConcepts: () =>
+    request<{ concepts: TaxConceptDto[] }>('/api/tax-concepts'),
+
+  getTaxResponsibilities: () =>
+    request<{ responsibilities: TaxResponsibilityDto[] }>('/api/tax-responsibilities'),
+
+  getThirdPartyTaxProfile: (companyId: string | null | undefined, thirdPartyId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ profile: ThirdPartyTaxProfileDto | null }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-profile`
+    );
+  },
+
+  saveThirdPartyTaxProfile: (companyId: string | null | undefined, thirdPartyId: string, data: UpsertTaxProfileInput) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ profile: ThirdPartyTaxProfileDto }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-profile`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  getDocumentTaxDeterminations: (companyId: string | null | undefined, documentId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ determinations: TaxDeterminationDto[] }>(
+      `/api/companies/${cId}/documents/${documentId}/tax-determinations`
+    );
+  },
+
+  calculateDocumentTaxes: (
+    companyId: string | null | undefined,
+    documentId: string,
+    input: {
+      renta_concept_id?: string | null;
+      ica_concept_id?: string | null;
+      concept_overrides?: Record<string, string>;
+    }
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ determinations: TaxDeterminationDto[] }>(
+      `/api/companies/${cId}/documents/${documentId}/tax-determinations/calculate`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      }
+    );
+  },
+
+  getCompanyTaxConfigurations: (companyId: string | null | undefined) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ configurations: CompanyTaxConfigurationDto[] }>(
+      `/api/companies/${cId}/tax-configurations`
+    );
+  },
+
+  saveCompanyTaxConfiguration: (
+    companyId: string | null | undefined,
+    data: {
+      tax_type_id: string;
+      operation_type?: 'ISSUED' | 'RECEIVED' | 'ALL';
+      document_category?: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+      is_enabled?: boolean;
+      default_rate?: number | null;
+      rate_basis?: 'PERCENT' | 'PER_MILLE';
+      default_concept_id?: string | null;
+      accounting_account?: string | null;
+      min_base_cop?: number;
+      metadata?: Record<string, any>;
+    }
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ configuration: CompanyTaxConfigurationDto }>(
+      `/api/companies/${cId}/tax-configurations`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  deleteCompanyTaxConfiguration: (companyId: string | null | undefined, id: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(
+      `/api/companies/${cId}/tax-configurations/${id}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  getThirdPartyTaxRules: (companyId: string | null | undefined, thirdPartyId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ rules: ThirdPartyTaxRuleDto[] }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules`
+    );
+  },
+
+  saveThirdPartyTaxRule: (
+    companyId: string | null | undefined,
+    thirdPartyId: string,
+    data: {
+      tax_type_id: string;
+      operation_type?: 'ISSUED' | 'RECEIVED' | 'ALL';
+      document_category?: 'INVOICE' | 'CREDIT_NOTE' | 'DEBIT_NOTE' | 'SUPPORT' | 'ALL';
+      is_exempt?: boolean;
+      custom_rate?: number | null;
+      rate_basis?: 'PERCENT' | 'PER_MILLE';
+      custom_concept_id?: string | null;
+      accounting_account?: string | null;
+      municipality_code?: string | null;
+      notes?: string | null;
+      valid_from?: string;
+      valid_to?: string;
+    }
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ rule: ThirdPartyTaxRuleDto }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }
+    );
+  },
+
+  deleteThirdPartyTaxRule: (companyId: string | null | undefined, thirdPartyId: string, id: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean }>(
+      `/api/companies/${cId}/third-parties/${thirdPartyId}/tax-rules/${id}`,
+      { method: 'DELETE' }
+    );
+  },
+
+  syncDocumentToSiigo: (companyId: string | null | undefined, documentId: string) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ success: boolean; external_id: string; message: string; number?: number }>(
+      `/api/companies/${cId}/documents/${documentId}/sync-to-siigo`,
+      { method: 'POST' }
+    );
+  },
+
+  overrideDocumentTax: (
+    companyId: string | null | undefined,
+    documentId: string,
+    input: { tax_type_id: string; override_rate: number; override_amount: number; reason: string }
+  ) => {
+    const cId = resolveEffectiveCompanyId(companyId);
+    return request<{ determination: TaxDeterminationDto }>(
+      `/api/companies/${cId}/documents/${documentId}/tax-determinations/override`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      }
+    );
+  },
+
+  getDocumentTaxes: (companyId: string, documentId: string) =>
+    request<{
+      document_id: string;
+      expense_account?: string | null;
+      payment_account?: string | null;
+      iva_account?: string | null;
+      taxes: Array<{
+        tax_code: string;
+        tax_name: string;
+        taxable_base: number;
+        rate: number | null;
+        amount: number;
+      }>;
+    }>(`/api/companies/${companyId}/documents/${documentId}/taxes`),
+
+  updateDocumentPaymentAccount: (companyId: string, documentId: string, payment_account: string | null) =>
+    request<{ success: boolean; payment_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/payment-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payment_account }),
+      },
+    ),
+
+  updateDocumentIvaAccount: (companyId: string, documentId: string, iva_account: string | null) =>
+    request<{ success: boolean; iva_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/iva-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ iva_account }),
+      },
+    ),
+
+  updateDocumentExpenseAccount: (companyId: string, documentId: string, expense_account: string | null) =>
+    request<{ success: boolean; expense_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/expense-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expense_account }),
+      },
+    ),
+
+  updateDocumentTaxes: (
+    companyId: string,
+    documentId: string,
+    taxes: Array<{
+      tax_code: string;
+      taxable_base: number;
+      rate?: number | null;
+      amount: number;
+    }>,
+  ) =>
+    request<{
+      document_id: string;
+      taxes: Array<{
+        tax_code: string;
+        tax_name: string;
+        taxable_base: number;
+        rate: number | null;
+        amount: number;
+      }>;
+    }>(`/api/companies/${companyId}/documents/${documentId}/taxes`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taxes }),
+    }),
 
   resolveConflict: (companyId: string, conflictId: string, resolution: string) =>
     request<{ resolved: boolean; id: string }>(

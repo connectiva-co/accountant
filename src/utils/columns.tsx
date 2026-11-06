@@ -79,7 +79,7 @@ export function invoiceColumns(side: 'emisor' | 'receptor', onViewXml?: (record:
       sortValue: (r) => r.match_status || '',
       render: (r) => <ErpStatusBadge status={r.match_status} externalNumber={r.external_erp_number} errorMessage={r.match_error} />,
     },
-    ...(side === 'receptor'
+    ...(onViewXml
       ? [
           {
             key: 'xml_accion',
