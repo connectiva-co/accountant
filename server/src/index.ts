@@ -2,8 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import fastifyStatic from '@fastify/static';
 import { buildServer } from './api/server.js';
-import { createDb, createPool, loadEnv, requireDatabaseUrl } from './db/connection.js';
-import { migrateToLatest } from './db/migrator.js';
+import { createDb, loadEnv, requireDatabaseUrl } from './db/connection.js';
 
 async function main(): Promise<void> {
   loadEnv();

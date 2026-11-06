@@ -1402,12 +1402,12 @@ export async function buildServer(
       }
 
       // Cuenta de gasto/contrapartida (ej. 51103001) y cuenta por pagar/cobrar
-      const expenseAccount = tpProfile?.expense_account;
+      const expenseAccount = doc.expense_account || tpProfile?.expense_account;
       if (!expenseAccount) {
         throw new HttpError(
           400,
           'CUENTA_GASTO_NO_CONFIGURADA',
-          `El tercero ${doc.issuer_name || thirdPartyNit} no tiene configurada la Cuenta Contable de Gasto/Contrapartida (ej. 51103001) en su Perfil Tributario. Por favor parametrice la cuenta en Terceros antes de sincronizar.`,
+          `El tercero ${doc.issuer_name || thirdPartyNit} no tiene configurada la Cuenta Contable de Gasto/Contrapartida (ej. 51103001) en su Perfil Tributario ni en la factura. Por favor parametrice la cuenta antes de sincronizar.`,
         );
       }
 
@@ -1415,13 +1415,14 @@ export async function buildServer(
 
       // Consultar impuestos de la factura para separar IVA descontable (2408)
       const docTaxes = await db
-        .selectFrom('document_taxes')
-        .selectAll()
-        .where('document_id', '=', documentId)
+        .selectFrom('document_taxes as dt')
+        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
+        .select(['dt.amount', 'tt.code as tax_code'])
+        .where('dt.document_id', '=', documentId)
         .execute();
 
       const ivaTax = docTaxes.find((t) => t.tax_code === '01' || t.tax_code === 'IVA');
-      const ivaAmount = ivaTax ? Number(ivaTax.tax_amount) : 0;
+      const ivaAmount = ivaTax ? Number(ivaTax.amount) : 0;
       const baseGasto = totalDoc - ivaAmount;
 
       // Base gravable / Gasto
