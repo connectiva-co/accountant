@@ -1415,6 +1415,7 @@ export async function buildServer(
 
       let query = db
         .selectFrom('documents as d')
+        .innerJoin('document_types as dt', 'dt.id', 'd.document_type_id')
         .innerJoin('third_parties as issuer', 'issuer.id', 'd.issuer_id')
         .leftJoin('third_party_tax_profiles as tp', 'tp.third_party_id', 'd.issuer_id')
         .leftJoin('document_integration_matches as dim', (join) =>
@@ -1435,6 +1436,7 @@ export async function buildServer(
         ])
         .where('d.company_id', '=', companyId)
         .where('d.direction', '=', 'RECEIVED')
+        .where('dt.code', 'not in', ['NOTA_CREDITO', 'NOTA_DEBITO', 'APPLICATION_RESPONSE'])
         .where('dim.id', 'is', null);
 
       if (validateThirdParties) {
@@ -1478,6 +1480,7 @@ export async function buildServer(
 
       let docQuery = db
         .selectFrom('documents as d')
+        .innerJoin('document_types as dt', 'dt.id', 'd.document_type_id')
         .innerJoin('third_parties as issuer', 'issuer.id', 'd.issuer_id')
         .leftJoin('document_integration_matches as dim', (join) =>
           join
@@ -1487,6 +1490,7 @@ export async function buildServer(
         .select(['d.id'])
         .where('d.company_id', '=', companyId)
         .where('d.direction', '=', 'RECEIVED')
+        .where('dt.code', 'not in', ['NOTA_CREDITO', 'NOTA_DEBITO', 'APPLICATION_RESPONSE'])
         .where('dim.id', 'is', null)
         .orderBy('d.issued_at', 'asc');
 

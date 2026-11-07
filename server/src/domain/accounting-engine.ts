@@ -366,9 +366,11 @@ export class AccountingEngine {
 
     // E. Cuenta por Pagar Proveedor (Crédito)
     const netoPagar = Math.round((totalDoc - totalRetenciones) * 100) / 100;
+    // Siigo exige que el prefix no sea vacío en el objeto due
+    const cleanPrefix = (doc.prefix || '').trim() || 'FAC';
     const dueInfo = doc.folio
       ? {
-          prefix: doc.prefix || '',
+          prefix: cleanPrefix,
           consecutive: docFolioNum,
           quote: 1,
           date: docDate,
