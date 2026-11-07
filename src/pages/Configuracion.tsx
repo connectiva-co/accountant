@@ -17,6 +17,7 @@ import { IntegracionesPanel } from '../components/settings/IntegracionesPanel';
 import { TaxSettingsPanel } from '../components/settings/TaxSettingsPanel';
 import { AccountingAccountsPanel } from '../components/settings/AccountingAccountsPanel';
 import { SiigoDocumentTypesPanel } from '../components/settings/SiigoDocumentTypesPanel';
+import { BulkProcessingSettingsPanel } from '../components/settings/BulkProcessingSettingsPanel';
 import { APP_NAME } from '../config/company';
 import { Percent, BookOpen, FileText } from 'lucide-react';
 
@@ -174,6 +175,9 @@ export const Configuracion: React.FC = () => {
               <InfoRow label="Idioma" value="Español (Colombia)" />
             </div>
           </Panel>
+
+          {/* Grupo Procesamiento masivo de la empresa activa */}
+          <BulkProcessingSettingsPanel companyId={apiCompany?.id ?? null} />
         </div>
       )}
 

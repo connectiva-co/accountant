@@ -57,10 +57,12 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
   const [selectedRentaConceptId, setSelectedRentaConceptId] = useState<string>('');
   const [selectedIcaConceptId, setSelectedIcaConceptId] = useState<string>('');
   const [documentExpenseAccount, setDocumentExpenseAccount] = useState<string>('');
+  const [documentPayableAccount, setDocumentPayableAccount] = useState<string>('');
   const [documentPaymentAccount, setDocumentPaymentAccount] = useState<string>('');
   const [documentIvaAccount, setDocumentIvaAccount] = useState<string>('');
   const [accountingAccounts, setAccountingAccounts] = useState<AccountingAccountDto[]>([]);
   const [savingExpenseAccount, setSavingExpenseAccount] = useState<boolean>(false);
+  const [savingPayableAccount, setSavingPayableAccount] = useState<boolean>(false);
   const [savingPaymentAccount, setSavingPaymentAccount] = useState<boolean>(false);
   const [savingIvaAccount, setSavingIvaAccount] = useState<boolean>(false);
 
@@ -136,6 +138,9 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       if (docTaxesRes.expense_account) {
         setDocumentExpenseAccount(docTaxesRes.expense_account);
       }
+      if ((docTaxesRes as any).payable_account) {
+        setDocumentPayableAccount((docTaxesRes as any).payable_account);
+      }
       if (docTaxesRes.payment_account) {
         setDocumentPaymentAccount(docTaxesRes.payment_account);
       }
@@ -153,6 +158,18 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       }
       setCompanyConfigs(enabledMap);
 
+      // Cargar perfil del tercero si hay identificador
+      let loadedProfile: ThirdPartyTaxProfileDto | null = null;
+      if (thirdPartyIdentifier) {
+        try {
+          const pRes = await api.getThirdPartyTaxProfile(companyId, thirdPartyIdentifier);
+          loadedProfile = pRes.profile;
+          setProfile(pRes.profile);
+        } catch {
+          setProfile(null);
+        }
+      }
+
       let initialRenta = '';
       let initialIca = '';
 
@@ -164,18 +181,16 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
         if (cCode === 'ICA_RETE' && cId) initialIca = cId;
       }
 
+      // Si la factura no tenía concepto asignado previamente, heredar del perfil predeterminado del tercero
+      if (!initialRenta && (loadedProfile as any)?.default_renta_concept_id) {
+        initialRenta = (loadedProfile as any).default_renta_concept_id;
+      }
+      if (!initialIca && (loadedProfile as any)?.default_ica_concept_id) {
+        initialIca = (loadedProfile as any).default_ica_concept_id;
+      }
+
       if (initialRenta) setSelectedRentaConceptId(initialRenta);
       if (initialIca) setSelectedIcaConceptId(initialIca);
-
-      // Cargar perfil del tercero si hay identificador
-      if (thirdPartyIdentifier) {
-        try {
-          const pRes = await api.getThirdPartyTaxProfile(companyId, thirdPartyIdentifier);
-          setProfile(pRes.profile);
-        } catch {
-          setProfile(null);
-        }
-      }
     } catch (err: any) {
       setError(err.message || 'Error cargando conceptos tributarios');
     } finally {
@@ -263,6 +278,20 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
       setError(err.message || 'Error guardando cuenta de gasto/costo de la factura');
     } finally {
       setSavingExpenseAccount(false);
+    }
+  };
+
+  const handlePayableAccountChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const val = e.target.value;
+    setDocumentPayableAccount(val);
+    if (!companyId || !documentId) return;
+    setSavingPayableAccount(true);
+    try {
+      await api.updateDocumentPayableAccount(companyId, documentId, val || null);
+    } catch (err: any) {
+      setError(err.message || 'Error guardando cuenta por pagar de la factura');
+    } finally {
+      setSavingPayableAccount(false);
     }
   };
 
@@ -518,6 +547,50 @@ export const InvoiceTaxLiquidator: React.FC<InvoiceTaxLiquidatorProps> = ({
           {profile?.expense_account
             ? `Predeterminada para ${thirdPartyName || 'este tercero'}: ${profile.expense_account}. Puedes seleccionar una subcuenta de gasto específica para esta factura.`
             : 'Especifica a qué cuenta de gasto o contrapartida se contabilizará esta factura en Siigo.'}
+        </span>
+      </div>
+
+      {/* Selector de Cuenta PUC por Pagar (Proveedor) para esta factura */}
+      <div className="rounded-lg border border-line bg-canvas/40 p-3">
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-[11px] font-semibold text-ink">
+            Cuenta Contable por Pagar (Proveedor) para esta Factura
+          </label>
+          {savingPayableAccount && (
+            <span className="text-[10px] text-ink-faint flex items-center gap-1">
+              <Loader2 className="w-2.5 h-2.5 animate-spin text-brand" /> Guardando...
+            </span>
+          )}
+        </div>
+        <select
+          value={documentPayableAccount || profile?.payable_account || ''}
+          onChange={handlePayableAccountChange}
+          disabled={loading || savingPayableAccount}
+          className="w-full px-3 py-2 rounded-lg border border-line bg-surface text-xs text-ink focus:outline-none focus:border-brand font-mono font-medium truncate"
+        >
+          <option value="">
+            {profile?.payable_account
+              ? `Por defecto del tercero: ${profile.payable_account}`
+              : '-- Por defecto empresa / 22050501 (Nacionales) --'}
+          </option>
+          {accountingAccounts
+            .filter((a) => a.code.startsWith('22') || a.code.startsWith('23'))
+            .map((acc) => (
+              <option key={acc.id} value={acc.code}>
+                {acc.code} - {acc.name}
+              </option>
+            ))}
+          {documentPayableAccount &&
+            !accountingAccounts.some((a) => a.code === documentPayableAccount) && (
+              <option value={documentPayableAccount}>
+                {documentPayableAccount} (Personalizada)
+              </option>
+            )}
+        </select>
+        <span className="text-[10px] text-ink-muted block mt-1">
+          {profile?.payable_account
+            ? `Predeterminada para ${thirdPartyName || 'este tercero'}: ${profile.payable_account}. Puedes asignar una subcuenta por pagar específica para esta factura.`
+            : 'Cuenta contable del pasivo (CxP) a la que se abonará el saldo neto de la factura.'}
         </span>
       </div>
 

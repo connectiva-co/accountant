@@ -10,7 +10,7 @@ import { EmptyState } from './EmptyState';
 
 export interface ColumnDef {
   key: string;
-  header: string;
+  header: React.ReactNode;
   align?: 'left' | 'right' | 'center';
   width?: string;
   sortValue?: (r: RadianRecord) => string | number;

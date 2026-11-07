@@ -1051,6 +1051,50 @@ export const api = {
       }>;
     }>(`/api/companies/${companyId}/documents/${documentId}/taxes`),
 
+  updateDocumentPayableAccount: (companyId: string, documentId: string, payable_account: string | null) =>
+    request<{ success: boolean; payable_account: string | null }>(
+      `/api/companies/${companyId}/documents/${documentId}/payable-account`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payable_account }),
+      },
+    ),
+
+  simulateSyncToSiigo: (companyId: string, document_ids?: string[]) =>
+    request<{
+      summary: {
+        total_documents: number;
+        valid: number;
+        errors: number;
+        total_debits: number;
+        total_credits: number;
+        is_balanced: boolean;
+      };
+      documents: Array<{
+        document_id: string;
+        folio?: string;
+        date?: string;
+        third_party_nit?: string;
+        third_party_name?: string;
+        total?: number;
+        base_gasto?: number;
+        iva?: number;
+        retenciones?: number;
+        neto_pagar?: number;
+        voucher_type?: string;
+        items?: any[];
+        processed_taxes?: any[];
+        warnings?: string[];
+        errors?: string[];
+        is_valid: boolean;
+      }>;
+    }>(`/api/companies/${companyId}/sync-to-siigo/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document_ids }),
+    }),
+
   updateDocumentPaymentAccount: (companyId: string, documentId: string, payment_account: string | null) =>
     request<{ success: boolean; payment_account: string | null }>(
       `/api/companies/${companyId}/documents/${documentId}/payment-account`,

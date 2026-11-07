@@ -54,6 +54,27 @@ export const GeneralSettingsSchema = z.object({
   maintenance_mode: z.boolean().default(false),
 });
 
+export const BulkProcessingSettingsSchema = z.object({
+  validate_third_parties: z.boolean().default(true),
+  unconfigured_taxes_treatment: z
+    .enum(['REQUIRE_REVIEW', 'ADD_TO_EXPENSE', 'DEFAULT_ACCOUNT'])
+    .default('REQUIRE_REVIEW'),
+  show_simulation: z.boolean().default(true),
+  allow_partial_sync: z.boolean().default(true),
+  default_expense_account: z.string().max(30).nullable().default(null),
+  default_payable_account: z.string().max(30).nullable().default('22050501'),
+  default_iva_account: z.string().max(30).nullable().default('24081501'),
+  default_purchase_voucher_type_id: z.number().int().nullable().default(43000),
+  tax_treatment_rules: z.record(z.object({
+    treatment: z.enum(['ADD_TO_EXPENSE', 'CUSTOM_ACCOUNT', 'REQUIRE_REVIEW']),
+    account: z.string().max(30).nullable().optional(),
+  })).default({
+    INC: { treatment: 'ADD_TO_EXPENSE', account: null },
+    IBUA: { treatment: 'ADD_TO_EXPENSE', account: null },
+    INC_BOLSAS: { treatment: 'ADD_TO_EXPENSE', account: null },
+  }),
+});
+
 export const SETTINGS_SCHEMAS = {
   import: ImportSettingsSchema,
   reporting: ReportingSettingsSchema,
@@ -61,6 +82,7 @@ export const SETTINGS_SCHEMAS = {
   company: CompanySettingsSchema,
   tax: TaxSettingsSchema,
   general: GeneralSettingsSchema,
+  bulk_processing: BulkProcessingSettingsSchema,
 } as const;
 
 export type SettingsScope = keyof typeof SETTINGS_SCHEMAS;

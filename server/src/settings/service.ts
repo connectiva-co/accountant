@@ -199,7 +199,11 @@ export class SettingsService {
     if (existing) {
       await this.db
         .updateTable('settings')
-        .set({ value: validated, value_type: jsonType(validated), description: options.description ?? existing.description })
+        .set({
+          value: JSON.stringify(validated) as any,
+          value_type: jsonType(validated),
+          description: options.description ?? existing.description,
+        })
         .where('id', '=', existing.id)
         .execute();
     } else {
@@ -209,7 +213,7 @@ export class SettingsService {
           company_id: companyId,
           scope,
           key,
-          value: validated,
+          value: JSON.stringify(validated) as any,
           value_type: jsonType(validated),
           description: options.description ?? null,
           is_system: false,
@@ -272,7 +276,7 @@ export class SettingsService {
 }
 
 function allScopes(): string[] {
-  return ['general', 'company', 'import', 'reporting', 'currency', 'tax'];
+  return ['general', 'company', 'import', 'reporting', 'currency', 'tax', 'bulk_processing'];
 }
 
 function jsonType(value: Json): string | null {

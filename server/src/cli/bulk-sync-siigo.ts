@@ -1,17 +1,18 @@
 import { getDb } from '../db/connection.js';
 import { IntegrationManager } from '../integrations/manager.js';
-import { TaxEngine } from '../domain/tax-engine.js';
-import { sql } from 'kysely';
+import { AccountingEngine } from '../domain/accounting-engine.js';
+import * as XLSX from 'xlsx';
+import path from 'path';
 
 interface Options {
   companyNit: string;
   dryRun: boolean;
   limit?: number;
+  exportExcel?: boolean;
 }
 
 export async function runBulkSync(options: Options) {
   const db = getDb();
-  const masterKey = process.env.SECRETS_MASTER_KEY || 'z+R8bvqHC1MQiVQSV7QmSlq1cUt+GFNDYtf7dC6y8aQ=';
 
   // 1. Resolver empresa
   const company = await db
@@ -31,7 +32,7 @@ export async function runBulkSync(options: Options) {
   console.log(`======================================================\n`);
 
   // 2. Integración Siigo
-  const integrations = new IntegrationManager(db as any, { masterKey });
+  const integrations = new IntegrationManager(db as any);
   const resolved = await integrations.getClient(company.id, 'SIIGO');
   const siigoClient = resolved.client as any;
 
@@ -42,6 +43,17 @@ export async function runBulkSync(options: Options) {
   } catch (err: any) {
     console.warn('No se pudo obtener catalogo de impuestos de Siigo:', err.message);
   }
+
+  // Catálogo de conceptos de retención y cuentas contables para el Excel
+  const allConcepts = await db.selectFrom('tax_concepts').selectAll().execute();
+  const conceptNameMap = new Map(allConcepts.map((c) => [c.id, c.name]));
+
+  const accountingAccounts = await db
+    .selectFrom('accounting_accounts')
+    .selectAll()
+    .where('company_id', '=', company.id)
+    .execute();
+  const accountNameMap = new Map(accountingAccounts.map((a) => [a.code, a.name]));
 
   // 3. Buscar facturas de compras (RECEIVED) de terceros con Perfil RUT que tengan expense_account
   // y que NO hayan sido sincronizadas a Siigo todavía (sin match MATCHED)
@@ -62,6 +74,10 @@ export async function runBulkSync(options: Options) {
       'd.total',
       'issuer.tax_id as issuer_nit',
       'issuer.legal_name as issuer_name',
+      'tp.person_type',
+      'tp.tax_regime',
+      'tp.is_declarant_renta',
+      'tp.ica_municipality_code',
       'd.expense_account as doc_expense_account',
       'd.iva_account as doc_iva_account',
       'd.siigo_voucher_type_id',
@@ -92,6 +108,10 @@ export async function runBulkSync(options: Options) {
     return;
   }
 
+  // Estructuras para recolectar datos del Excel
+  const excelFacturas: any[] = [];
+  const mapTerceros = new Map<string, any>();
+
   let successCount = 0;
   let errorCount = 0;
 
@@ -99,178 +119,67 @@ export async function runBulkSync(options: Options) {
     const doc = candidates[i];
     const folioStr = doc.prefix ? `${doc.prefix}-${doc.folio}` : (doc.folio || doc.id);
     const docDate = doc.issued_at ? String(doc.issued_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
-    const docPrefix = doc.prefix || 'FE';
-    const docFolioNum = parseInt(String(doc.folio || '1').replace(/\D/g, ''), 10) || 1;
     const totalDoc = Number(doc.total ?? 0);
-    const expenseAccount = doc.doc_expense_account || doc.tp_expense_account;
+    const expenseAccount = doc.doc_expense_account || doc.tp_expense_account || '';
     const payableAccount = doc.tp_payable_account || '22050501';
 
     console.log(`[${i + 1}/${candidates.length}] Procesando ${folioStr} | Proveedor: ${doc.issuer_name} (${doc.issuer_nit}) | Total: $${totalDoc.toLocaleString('es-CO')}`);
 
     try {
-      // Liquidar / Asegurar determinaciones tributarias
-      let determinations = await db
-        .selectFrom('document_tax_determinations as d')
-        .innerJoin('tax_types as tt', 'tt.id', 'd.tax_type_id')
-        .selectAll('d')
-        .select(['tt.code as tax_type_code', 'tt.name as tax_type_name'])
-        .where('d.document_id', '=', doc.id)
-        .where('d.company_id', '=', company.id)
-        .execute();
-
-      if (determinations.length === 0) {
-        // Calcular con motor
-        await TaxEngine.determine(db, {
-          companyId: company.id,
-          documentId: doc.id,
-        });
-
-        determinations = await db
-          .selectFrom('document_tax_determinations as d')
-          .innerJoin('tax_types as tt', 'tt.id', 'd.tax_type_id')
-          .selectAll('d')
-          .select(['tt.code as tax_type_code', 'tt.name as tax_type_name'])
-          .where('d.document_id', '=', doc.id)
-          .where('d.company_id', '=', company.id)
-          .execute();
-      }
-
-      // IVA
-      const docTaxes = await db
-        .selectFrom('document_taxes as dt')
-        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
-        .select(['dt.amount', 'tt.code as tax_code'])
-        .where('dt.document_id', '=', doc.id)
-        .execute();
-
-      const ivaTax = docTaxes.find((t) => t.tax_code === '01' || t.tax_code === 'IVA');
-      const ivaAmount = ivaTax ? Number(ivaTax.amount) : 0;
-      const baseGasto = totalDoc - ivaAmount;
-
-      const items: any[] = [];
-      let totalRetenciones = 0;
-
-      // Líneas de retenciones
-      for (const det of determinations) {
-        const amount = Number(det.amount);
-        if (amount <= 0) continue;
-
-        let accountCode = (det as any).accounting_account;
-        const numRate = Number(det.rate);
-
-        if (!accountCode) {
-          if (det.tax_type_code.includes('RENTA')) {
-            if (Math.abs(numRate - 0.04) < 0.001) accountCode = '23652503';
-            else if (Math.abs(numRate - 0.06) < 0.001) accountCode = '23652501';
-            else if (Math.abs(numRate - 0.01) < 0.001) accountCode = '23652505';
-            else if (Math.abs(numRate - 0.035) < 0.001) accountCode = '23654004';
-            else if (Math.abs(numRate - 0.025) < 0.001) accountCode = '23654001';
-            else if (Math.abs(numRate - 0.11) < 0.001 || Math.abs(numRate - 0.10) < 0.001) accountCode = '23651501';
-            else accountCode = '23654001';
-          } else if (det.tax_type_code.includes('ICA')) {
-            if (Math.abs(numRate - 0.00966) < 0.0001) accountCode = '23680505';
-            else if (Math.abs(numRate - 0.00866) < 0.0001) accountCode = '23680501';
-            else if (Math.abs(numRate - 0.01104) < 0.0001) accountCode = '23680502';
-            else accountCode = '23680505';
-          } else {
-            accountCode = '23654001';
-          }
-        }
-
-        const ratePercent = Number(det.rate) <= 0.05
-          ? Number(det.rate) * 1000
-          : Number(det.rate) <= 1
-          ? Number(det.rate) * 100
-          : Number(det.rate);
-
-        const matchedTax = siigoTaxes.find((st) => {
-          if (det.tax_type_code.includes('ICA')) {
-            return st.type === 'ReteICA' && (
-              Math.abs(st.percentage - ratePercent) < 0.1 ||
-              Math.abs(st.percentage - Number(det.rate) * 1000) < 0.1 ||
-              Math.abs(st.percentage - Number(det.rate) * 100) < 0.1
-            );
-          }
-          if (det.tax_type_code.includes('RENTA')) {
-            if (accountCode.startsWith('236530')) return st.id === 21285;
-            return st.type === 'Retefuente' && (
-              Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1
-            );
-          }
-          if (det.tax_type_code.includes('IVA')) {
-            return st.type === 'ReteIVA' && Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1;
-          }
-          return false;
-        });
-
-        const retItem: any = {
-          account: { code: accountCode, movement: 'Credit' },
-          customer: { identification: doc.issuer_nit, branch_office: 0 },
-          description: `Retención ${det.tax_type_name} Factura ${folioStr}`,
-          value: amount,
-        };
-
-        const isGenericTaxAccount =
-          accountCode === '23657003' ||
-          accountCode === '23659901' ||
-          accountCode === '23657501' ||
-          accountCode.endsWith('09') ||
-          accountCode.endsWith('99');
-
-        if (matchedTax && !isGenericTaxAccount) {
-          retItem.tax = { id: matchedTax.id };
-        }
-
-        items.push(retItem);
-        totalRetenciones += amount;
-      }
-
-      // Gasto
-      items.push({
-        account: { code: expenseAccount, movement: 'Debit' },
-        customer: { identification: doc.issuer_nit, branch_office: 0 },
-        description: `Gasto Factura ${folioStr}`,
-        value: baseGasto,
+      const journalData = await AccountingEngine.buildPurchaseJournal(db, {
+        companyId: company.id,
+        documentId: doc.id,
+        siigoTaxes,
       });
 
-      // IVA
-      if (ivaAmount > 0) {
-        const vatAccount = doc.doc_iva_account || doc.tp_iva_account || '24081501';
-        let matchedIva: any = null;
-        if (vatAccount === '24081501') {
-          matchedIva = siigoTaxes.find((st) => st.id === 21284);
-        } else if (vatAccount === '24081003') {
-          matchedIva = siigoTaxes.find((st) => st.id === 6500);
-        } else {
-          matchedIva = siigoTaxes.find((st) => st.id === 6499);
-        }
-
-        const ivaItem: any = {
-          account: { code: vatAccount, movement: 'Debit' },
-          customer: { identification: doc.issuer_nit, branch_office: 0 },
-          description: `IVA Factura ${folioStr}`,
-          value: ivaAmount,
-        };
-        if (matchedIva) ivaItem.tax = { id: matchedIva.id };
-        items.push(ivaItem);
+      if (journalData.blockingErrors.length > 0) {
+        throw new Error(journalData.blockingErrors.join(' | '));
       }
 
-      // Neto proveedor
-      const netoPagar = totalDoc - totalRetenciones;
-      items.push({
-        account: { code: payableAccount, movement: 'Credit' },
-        customer: { identification: doc.issuer_nit, branch_office: 0 },
-        description: `Neto Factura ${folioStr}`,
-        value: netoPagar,
-        due: {
-          prefix: docPrefix,
-          consecutive: docFolioNum,
-          quote: 1,
-          date: docDate,
-        },
+      const items = journalData.items;
+      const voucherTypeId = journalData.documentTypeId;
+      const baseGasto = journalData.baseContableGasto;
+      const ivaAmount = journalData.ivaAmount;
+      const totalRetenciones = journalData.totalRetenciones;
+      const netoPagar = journalData.netoPagar;
+
+      // Guardar información para la hoja de Facturas en Excel
+      excelFacturas.push({
+        'Prefijo': doc.prefix || '',
+        'Folio': doc.folio || '',
+        'Fecha Emisión': docDate,
+        'NIT Proveedor': doc.issuer_nit,
+        'Razón Social': doc.issuer_name,
+        'Total Factura': totalDoc,
+        'Base Gasto': baseGasto,
+        'Cuenta Gasto': expenseAccount,
+        'Nombre Cuenta Gasto': accountNameMap.get(expenseAccount) || '',
+        'IVA': ivaAmount,
+        'Impuestos Adicionales': journalData.additionalTaxesAmount,
+        'Retenciones': totalRetenciones,
+        'Neto a Pagar': netoPagar,
+        'Cuenta por Pagar': payableAccount,
+        'Tipo Comprobante Siigo': `CC-${voucherTypeId}`,
       });
 
-      const voucherTypeId = doc.siigo_voucher_type_id || doc.tp_document_type_id || 43000;
+      // Guardar información única del Tercero para la hoja de Perfil RUT en Excel
+      if (!mapTerceros.has(doc.issuer_nit)) {
+        mapTerceros.set(doc.issuer_nit, {
+          'NIT': doc.issuer_nit,
+          'Razón Social': doc.issuer_name,
+          'Tipo Persona': doc.person_type,
+          'Régimen': doc.tax_regime,
+          'Declarante Renta': doc.is_declarant_renta ? 'SÍ' : 'NO',
+          'Municipio ICA': doc.ica_municipality_code || '11001',
+          'Cuenta Gasto / Costo': doc.tp_expense_account || '',
+          'Nombre Cuenta Gasto': accountNameMap.get(doc.tp_expense_account || '') || '',
+          'Cuenta por Pagar': doc.tp_payable_account || '22050501',
+          'Cuenta IVA Descontable': doc.tp_iva_account || '',
+          'Concepto ReteFuente Default': doc.default_renta_concept_id ? conceptNameMap.get(doc.default_renta_concept_id) || doc.default_renta_concept_id : 'Sin concepto',
+          'Concepto ReteICA Default': doc.default_ica_concept_id ? conceptNameMap.get(doc.default_ica_concept_id) || doc.default_ica_concept_id : 'Sin concepto',
+          'Comprobante Siigo': doc.tp_document_type_id ? `CC-${doc.tp_document_type_id}` : 'Por defecto (CC-16)',
+        });
+      }
 
       if (options.dryRun) {
         console.log(`  -> [DRY RUN OK] Comprobante tipo CC-${voucherTypeId} listo: Gasto $${baseGasto}, IVA $${ivaAmount}, Retenciones $${totalRetenciones}, Neto $${netoPagar}`);
@@ -315,6 +224,16 @@ export async function runBulkSync(options: Options) {
       }
 
       // Registrar match
+      const integrationRow = await db
+        .selectFrom('company_integrations')
+        .select(['id'])
+        .where('company_id', '=', company.id)
+        .where('provider_id', '=', (eb) =>
+          eb.selectFrom('integration_providers').select('id').where('code', '=', 'SIIGO')
+        )
+        .executeTakeFirst();
+
+      const chosenIntegrationId = integrationRow?.id || 'default';
       const journalId = journal.id || String(journal.number || Date.now());
       const extId = `SIIGO:JOURNAL:${journalId}`;
       await db
@@ -322,7 +241,7 @@ export async function runBulkSync(options: Options) {
         .values({
           company_id: company.id,
           document_id: doc.id,
-          company_integration_id: resolved.id,
+          company_integration_id: chosenIntegrationId,
           external_id: extId,
           external_number: journal.number ? String(journal.number) : extId,
           external_document_type: 'Journal',
@@ -360,6 +279,27 @@ export async function runBulkSync(options: Options) {
   console.log(`Exitosos: ${successCount}`);
   console.log(`Fallidos: ${errorCount}`);
   console.log(`======================================================\n`);
+
+  // Exportar Excel si se solicita o por defecto en dryRun
+  if (options.exportExcel || options.dryRun) {
+    const wb = XLSX.utils.book_new();
+
+    // Hoja 1: Resumen de Facturas a sincronizar
+    const wsFacturas = XLSX.utils.json_to_sheet(excelFacturas);
+    XLSX.utils.book_append_sheet(wb, wsFacturas, 'Facturas a Sincronizar');
+
+    // Hoja 2: Terceros y Parametrización RUT
+    const wsTerceros = XLSX.utils.json_to_sheet(Array.from(mapTerceros.values()));
+    XLSX.utils.book_append_sheet(wb, wsTerceros, 'Terceros Parametrizados');
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    const fileName = `Simulacion_Sincronizacion_Siigo_${options.companyNit}_${timestamp}.xlsx`;
+    const outputPath = path.resolve(process.cwd(), fileName);
+
+    XLSX.writeFile(wb, outputPath);
+    console.log(`📊 Reporte Excel generado exitosamente:`);
+    console.log(`   ${outputPath}\n`);
+  }
 }
 
 // Ejecución directa CLI

@@ -125,8 +125,10 @@ export interface DocumentsTable {
   is_active: Generated<boolean>;
   superseded_at: TimestamptzNull;
   expense_account: string | null;
+  payable_account: string | null;
   payment_account: string | null;
   iva_account: string | null;
+  siigo_voucher_type_id?: number | null;
   created_at: CreatedAt;
   updated_at: CreatedAt;
 }

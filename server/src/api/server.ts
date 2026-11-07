@@ -28,6 +28,7 @@ import { SettingsService } from '../settings/service.js';
 import { UnknownScopeError, UnknownSettingKeyError } from '../settings/schemas.js';
 import { runImport } from '../import/runImport.js';
 import { SpreadsheetError } from '../import/spreadsheet.js';
+import { AccountingEngine } from '../domain/accounting-engine.js';
 import { buildDataset } from '../services/dataset.js';
 import { createGuards, currentUser } from '../auth/guards.js';
 import { listMemberCompanies } from '../auth/permissions.js';
@@ -1233,96 +1234,10 @@ export async function buildServer(
         throw new HttpError(404, 'DOCUMENTO_NO_ENCONTRADO', 'Documento no encontrado.');
       }
 
-      // 2. Obtener cliente Siigo
+      // 2. Obtener cliente Siigo y catálogo de impuestos
       const resolved = await integrations.getClient(companyId, 'SIIGO');
       const siigoClient = resolved.client as any;
 
-      // 3. Determinar tercero y dirección
-      const isPurchase = doc.direction === 'RECEIVED';
-      const thirdPartyId = isPurchase ? doc.issuer_id : doc.receiver_id;
-      const thirdPartyNit = isPurchase ? doc.issuer_nit : doc.receiver_nit;
-
-      if (!thirdPartyNit) {
-        throw new HttpError(400, 'TERCERO_SIN_NIT', 'El tercero del documento no tiene NIT.');
-      }
-
-      // 4. Obtener determinaciones de impuestos
-      const determinations = await db
-        .selectFrom('document_tax_determinations as d')
-        .innerJoin('tax_types as tt', 'tt.id', 'd.tax_type_id')
-        .selectAll('d')
-        .select(['tt.code as tax_type_code', 'tt.name as tax_type_name'])
-        .where('d.document_id', '=', documentId)
-        .where('d.company_id', '=', companyId)
-        .execute();
-
-      // 5. Obtener reglas de cuenta contable del tercero y de la empresa
-      const tpRules = thirdPartyId
-        ? await db
-            .selectFrom('third_party_tax_rules')
-            .selectAll()
-            .where('company_id', '=', companyId)
-            .where('third_party_id', '=', thirdPartyId)
-            .execute()
-        : [];
-
-      const companyConfigs = await db
-        .selectFrom('company_tax_configurations')
-        .selectAll()
-        .where('company_id', '=', companyId)
-        .execute();
-
-      // Perfil del tercero para cuentas de gasto / contrapartida y por pagar
-      const tpProfile = thirdPartyId
-        ? await db
-            .selectFrom('third_party_tax_profiles')
-            .selectAll()
-            .where('company_id', '=', companyId)
-            .where('third_party_id', '=', thirdPartyId)
-            .orderBy('valid_from', 'desc')
-            .executeTakeFirst()
-        : null;
-
-      // 6. Preparar líneas del comprobante contable (Journal)
-      // Tipo de comprobante en Siigo:
-      // Prioridad 1: Configuración específica del tercero (document_type_id)
-      // Prioridad 2: Setting de la empresa (siigo.purchase_voucher_type_id)
-      // Prioridad 3: Buscar comprobante CC-16 ("CAUSACION CUENTAS POR PAGAR" id 43000) o primer CC
-      let documentTypeId = tpProfile?.document_type_id ?? null;
-
-      if (!documentTypeId) {
-        // Intentar leer de settings de la empresa
-        const compSetting = await db
-          .selectFrom('settings')
-          .select(['value'])
-          .where('company_id', '=', companyId)
-          .where('scope', '=', 'siigo')
-          .where('key', '=', 'purchase_voucher_type_id')
-          .executeTakeFirst();
-
-        if (compSetting?.value && Number(compSetting.value)) {
-          documentTypeId = Number(compSetting.value);
-        }
-      }
-
-      if (!documentTypeId) {
-        try {
-          const docTypes = await siigoClient.catalogs.documentTypes({ type: 'CC' });
-          if (docTypes && docTypes.length > 0) {
-            // Buscar CC-16 (CAUSACION CUENTAS POR PAGAR)
-            const cc16 = docTypes.find((dt: any) => String(dt.code) === '16' || String(dt.id) === '43000');
-            documentTypeId = cc16 ? cc16.id : docTypes[0].id;
-          }
-        } catch {
-          documentTypeId = 43000; // Default CC-16 en Siigo
-        }
-      }
-
-      if (!documentTypeId) {
-        documentTypeId = 43000;
-      }
-
-      // Catálogo de impuestos en Siigo para enlazar retenciones requeridas
       let siigoTaxes: any[] = [];
       try {
         siigoTaxes = await siigoClient.catalogs.taxes();
@@ -1330,218 +1245,27 @@ export async function buildServer(
         // ignorar si falla
       }
 
-      const totalDoc = Number(doc.total ?? 0);
-      const docDate = doc.issued_at ? String(doc.issued_at).slice(0, 10) : new Date().toISOString().slice(0, 10);
-      const docPrefix = doc.prefix || 'FE';
-      const docFolioNum = parseInt(String(doc.folio || '1').replace(/\D/g, ''), 10) || 1;
-      const folioStr = doc.prefix ? `${doc.prefix}-${doc.folio}` : (doc.folio || doc.external_uid || documentId);
+      // 3. Generar movimiento contable centralizado mediante AccountingEngine
+      const journalData = await AccountingEngine.buildPurchaseJournal(db, {
+        companyId,
+        documentId,
+        siigoTaxes,
+      });
 
-      const items: any[] = [];
-      let totalRetenciones = 0;
-
-      // Líneas de retenciones calculadas
-      for (const det of determinations) {
-        const amount = Number(det.amount);
-        if (amount <= 0) continue;
-
-        const tpRule = tpRules.find((r) => r.tax_type_id === det.tax_type_id);
-        const compRule = companyConfigs.find((c) => c.tax_type_id === det.tax_type_id);
-
-        // 1. Prioridad: Cuenta explícita seleccionada en la determinación de esta factura
-        let accountCode = (det as any).accounting_account;
-
-        // 2. Si no hay en la factura, buscar en regla del tercero o empresa
-        if (!accountCode) {
-          accountCode = tpRule?.accounting_account || compRule?.accounting_account;
-        }
-
-        const numRate = Number(det.rate);
-
-        // Si no hay cuenta configurada, resolver automáticamente a la cuenta auxiliar exacta de Siigo asociada al porcentaje
-        if (!accountCode) {
-          if (det.tax_type_code.includes('RENTA')) {
-            if (Math.abs(numRate - 0.04) < 0.001) accountCode = '23652503'; // Servicios 4%
-            else if (Math.abs(numRate - 0.06) < 0.001) accountCode = '23652501'; // Servicios 6%
-            else if (Math.abs(numRate - 0.01) < 0.001) accountCode = '23652505'; // Servicios 1%
-            else if (Math.abs(numRate - 0.035) < 0.001) accountCode = '23654004'; // Compras 3.5%
-            else if (Math.abs(numRate - 0.025) < 0.001) accountCode = '23654001'; // Compras 2.5%
-            else if (Math.abs(numRate - 0.11) < 0.001 || Math.abs(numRate - 0.10) < 0.001) accountCode = '23651501'; // Honorarios
-            else accountCode = isPurchase ? '23654001' : '13551501';
-          } else if (det.tax_type_code.includes('ICA')) {
-            if (Math.abs(numRate - 0.00966) < 0.0001) accountCode = '23680505'; // Reteica 9.66
-            else if (Math.abs(numRate - 0.00866) < 0.0001) accountCode = '23680501'; // Reteica 8.66
-            else if (Math.abs(numRate - 0.01104) < 0.0001) accountCode = '23680502'; // Reteica 11.04
-            else accountCode = '23680505';
-          } else {
-            accountCode = isPurchase ? '23654001' : '13551501';
-          }
-        }
-
-        // Mapear impuesto de Siigo por porcentaje/tipo si la cuenta lo requiere
-        // Nota: para ICA la tarifa en det.rate viene por mil (ej. 0.00866 = 8.66 por mil)
-        const ratePercent = Number(det.rate) <= 0.05
-          ? Number(det.rate) * 1000 // Si es menor a 0.05 (ej. 0.00866 o 0.01104), probar por mil (8.66 o 11.04)
-          : Number(det.rate) <= 1
-          ? Number(det.rate) * 100
-          : Number(det.rate);
-
-        const matchedTax = siigoTaxes.find((st) => {
-          if (det.tax_type_code.includes('ICA')) {
-            // Comparar contra 8.66, 11.04, 9.66 o contra porcentaje directo
-            return st.type === 'ReteICA' && (
-              Math.abs(st.percentage - ratePercent) < 0.1 ||
-              Math.abs(st.percentage - Number(det.rate) * 1000) < 0.1 ||
-              Math.abs(st.percentage - Number(det.rate) * 100) < 0.1
-            );
-          }
-          if (det.tax_type_code.includes('RENTA')) {
-            // Caso Arrendamientos (236530): en Siigo está parametrizado con tax 21285 ("Retefuente 3.5% Arriendos")
-            if (accountCode.startsWith('236530')) {
-              return st.id === 21285;
-            }
-            return st.type === 'Retefuente' && (
-              Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1
-            );
-          }
-          if (det.tax_type_code.includes('IVA')) {
-            return st.type === 'ReteIVA' && Math.abs(st.percentage - (Number(det.rate) <= 1 ? Number(det.rate) * 100 : Number(det.rate))) < 0.1;
-          }
-          return false;
-        });
-
-        const retItem: any = {
-          account: {
-            code: accountCode,
-            movement: isPurchase ? 'Credit' : 'Debit',
-          },
-          customer: {
-            identification: thirdPartyNit,
-            branch_office: 0,
-          },
-          description: `Retención ${det.tax_type_name} Factura ${folioStr}`,
-          value: amount,
-        };
-
-        // Si la cuenta contable en Siigo es genérica (ej. 23657003, 23652509, 23659901),
-        // Siigo NO admite amarrar un objeto "tax" y rechaza con error account_settings.
-        // Solo las subcuentas tarifarias específicas (ej. 23654001, 23652503, 23680505) tienen impuesto asociado en Siigo.
-        const isGenericTaxAccount =
-          accountCode === '23657003' ||
-          accountCode === '23659901' ||
-          accountCode === '23657501' ||
-          accountCode.endsWith('09') ||
-          accountCode.endsWith('99');
-
-        if (matchedTax && !isGenericTaxAccount) {
-          retItem.tax = { id: matchedTax.id };
-        }
-
-        items.push(retItem);
-        totalRetenciones += amount;
-      }
-
-      // Cuenta de gasto/contrapartida (ej. 51103001) y cuenta por pagar/cobrar
-      const expenseAccount = doc.expense_account || tpProfile?.expense_account;
-      if (!expenseAccount) {
+      if (journalData.blockingErrors.length > 0) {
         throw new HttpError(
           400,
-          'CUENTA_GASTO_NO_CONFIGURADA',
-          `El tercero ${doc.issuer_name || thirdPartyNit} no tiene configurada la Cuenta Contable de Gasto/Contrapartida (ej. 51103001) en su Perfil Tributario ni en la factura. Por favor parametrice la cuenta antes de sincronizar.`,
+          'ERROR_CONTABLE',
+          journalData.blockingErrors.join(' | '),
         );
       }
 
-      const payableAccount = tpProfile?.payable_account || (isPurchase ? '22050501' : '13050501');
+      const documentTypeId = journalData.documentTypeId;
+      const docDate = journalData.date;
+      const folioStr = journalData.folio;
+      const items = journalData.items;
 
-      // Consultar impuestos de la factura para separar IVA descontable (2408)
-      const docTaxes = await db
-        .selectFrom('document_taxes as dt')
-        .innerJoin('tax_types as tt', 'tt.id', 'dt.tax_type_id')
-        .select(['dt.amount', 'tt.code as tax_code'])
-        .where('dt.document_id', '=', documentId)
-        .execute();
-
-      const ivaTax = docTaxes.find((t) => t.tax_code === '01' || t.tax_code === 'IVA');
-      const ivaAmount = ivaTax ? Number(ivaTax.amount) : 0;
-      const baseGasto = totalDoc - ivaAmount;
-
-      // Base gravable / Gasto
-      const netoPagar = totalDoc - totalRetenciones;
-
-      items.push({
-        account: {
-          code: expenseAccount,
-          movement: isPurchase ? 'Debit' : 'Credit',
-        },
-        customer: {
-          identification: thirdPartyNit,
-          branch_office: 0,
-        },
-        description: `Gasto Factura ${folioStr}`,
-        value: baseGasto,
-      });
-
-      // Si la factura tiene IVA, registrar línea de IVA Descontable
-      if (ivaAmount > 0) {
-        const vatAccount = doc.iva_account || tpProfile?.iva_account || (isPurchase ? '24081501' : '24080501');
-        const ivaRate = baseGasto > 0 ? (ivaAmount / baseGasto) * 100 : 19;
-        
-        // Enlazar el impuesto de IVA en Siigo correspondiente a la cuenta y tarifa
-        // 24081501 es "Descontable por servicios" y requiere el tax 21284 ("IVA 19% Servicios")
-        // 24081001 es "Iva descontable por compras 19%" y requiere el tax 6499 ("IVA 19%")
-        let matchedIva: any = null;
-        if (vatAccount === '24081501') {
-          matchedIva = siigoTaxes.find((st) => st.id === 21284) || siigoTaxes.find((st) => st.type === 'IVA' && st.name.toLowerCase().includes('servicio'));
-        } else if (vatAccount === '24081003') {
-          matchedIva = siigoTaxes.find((st) => st.id === 6500 || (st.type === 'IVA' && Math.abs(st.percentage - 5) < 1));
-        } else {
-          matchedIva = siigoTaxes.find((st) => st.id === 6499 || (st.type === 'IVA' && Math.abs(st.percentage - 19) < 1 && !st.name.toLowerCase().includes('servicio')));
-        }
-
-        if (!matchedIva) {
-          matchedIva = siigoTaxes.find((st) => st.type === 'IVA' && Math.abs(st.percentage - ivaRate) < 1);
-        }
-
-        const ivaItem: any = {
-          account: {
-            code: vatAccount,
-            movement: isPurchase ? 'Debit' : 'Credit',
-          },
-          customer: {
-            identification: thirdPartyNit,
-            branch_office: 0,
-          },
-          description: `IVA Factura ${folioStr}`,
-          value: ivaAmount,
-        };
-
-        if (matchedIva) {
-          ivaItem.tax = { id: matchedIva.id };
-        }
-
-        items.push(ivaItem);
-      }
-
-      // Cuenta por pagar proveedor (o por cobrar cliente) con objeto "due" obligatorio en Siigo
-      items.push({
-        account: {
-          code: payableAccount,
-          movement: isPurchase ? 'Credit' : 'Debit',
-        },
-        customer: {
-          identification: thirdPartyNit,
-          branch_office: 0,
-        },
-        description: `Neto Factura ${folioStr}`,
-        value: netoPagar,
-        due: {
-          prefix: docPrefix,
-          consecutive: docFolioNum,
-          quote: 1,
-          date: docDate,
-        },
-      });
-
-      // 7. Enviar a Siigo mediante Journals (Comprobante Contable) con auto-reintento inteligente
+      // 4. Enviar a Siigo mediante Journals (Comprobante Contable) con auto-reintento inteligente
       try {
         let journal: any;
         try {
@@ -1653,10 +1377,15 @@ export async function buildServer(
     async (req) => {
       const { companyId } = req.params as { companyId: string };
 
-      const query = db
+      // Consultar configuración de procesamiento masivo
+      const settingsMap = await settings.loadMap(companyId);
+      const defaultGlobalExpense = (settingsMap.get('bulk_processing.default_expense_account') as string | undefined) || null;
+      const validateThirdParties = (settingsMap.get('bulk_processing.validate_third_parties') as boolean | undefined) ?? true;
+
+      let query = db
         .selectFrom('documents as d')
         .innerJoin('third_parties as issuer', 'issuer.id', 'd.issuer_id')
-        .innerJoin('third_party_tax_profiles as tp', 'tp.third_party_id', 'd.issuer_id')
+        .leftJoin('third_party_tax_profiles as tp', 'tp.third_party_id', 'd.issuer_id')
         .leftJoin('document_integration_matches as dim', (join) =>
           join
             .onRef('dim.document_id', '=', 'd.id')
@@ -1675,17 +1404,131 @@ export async function buildServer(
         ])
         .where('d.company_id', '=', companyId)
         .where('d.direction', '=', 'RECEIVED')
-        .where('dim.id', 'is', null)
-        .where((eb) =>
+        .where('dim.id', 'is', null);
+
+      if (validateThirdParties) {
+        query = query.where('tp.id', 'is not', null);
+      }
+
+      if (!defaultGlobalExpense) {
+        query = query.where((eb) =>
           eb.or([
             eb('d.expense_account', 'is not', null),
             eb('tp.expense_account', 'is not', null),
           ])
+        );
+      }
+
+      const documents = await query.orderBy('d.issued_at', 'asc').execute();
+      return { count: documents.length, documents };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Simulación Masiva Contable (Dry Run para Compras / Siigo)        */
+  /* ---------------------------------------------------------------- */
+  app.post(
+    '/api/companies/:companyId/sync-to-siigo/simulate',
+    {
+      preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
+    },
+    async (req) => {
+      const { companyId } = req.params as { companyId: string };
+      const { document_ids } = (req.body as { document_ids?: string[] }) || {};
+
+      let siigoTaxes: any[] = [];
+      try {
+        const resolved = await integrations.getClient(companyId, 'SIIGO');
+        const siigoClient = resolved.client as any;
+        siigoTaxes = await siigoClient.catalogs.taxes();
+      } catch {
+        // Ignorar si no está conectado o no se puede cargar el catálogo
+      }
+
+      let docQuery = db
+        .selectFrom('documents as d')
+        .innerJoin('third_parties as issuer', 'issuer.id', 'd.issuer_id')
+        .leftJoin('document_integration_matches as dim', (join) =>
+          join
+            .onRef('dim.document_id', '=', 'd.id')
+            .on('dim.match_status', '=', 'MATCHED')
         )
+        .select(['d.id'])
+        .where('d.company_id', '=', companyId)
+        .where('d.direction', '=', 'RECEIVED')
+        .where('dim.id', 'is', null)
         .orderBy('d.issued_at', 'asc');
 
-      const documents = await query.execute();
-      return { count: documents.length, documents };
+      if (document_ids && document_ids.length > 0) {
+        docQuery = docQuery.where('d.id', 'in', document_ids);
+      }
+
+      const candidateDocs = await docQuery.execute();
+
+      const results: any[] = [];
+      let totalDebitos = 0;
+      let totalCreditos = 0;
+      let validCount = 0;
+      let errorCount = 0;
+
+      for (const cDoc of candidateDocs) {
+        try {
+          const sim = await AccountingEngine.buildPurchaseJournal(db, {
+            companyId,
+            documentId: cDoc.id,
+            siigoTaxes,
+          });
+
+          const docDebits = sim.items.filter((i) => i.account.movement === 'Debit').reduce((a, b) => a + b.value, 0);
+          const docCredits = sim.items.filter((i) => i.account.movement === 'Credit').reduce((a, b) => a + b.value, 0);
+          totalDebitos += docDebits;
+          totalCreditos += docCredits;
+
+          if (sim.blockingErrors.length === 0 && sim.isBalanced) {
+            validCount++;
+          } else {
+            errorCount++;
+          }
+
+          results.push({
+            document_id: sim.documentId,
+            folio: sim.folio,
+            date: sim.date,
+            third_party_nit: sim.thirdPartyNit,
+            third_party_name: sim.thirdPartyName,
+            total: sim.totalDocument,
+            base_gasto: sim.baseContableGasto,
+            iva: sim.ivaAmount,
+            retenciones: sim.totalRetenciones,
+            neto_pagar: sim.netoPagar,
+            voucher_type: `CC-${sim.documentTypeId}`,
+            items: sim.items,
+            processed_taxes: sim.processedTaxes,
+            warnings: sim.warnings,
+            errors: sim.blockingErrors,
+            is_valid: sim.blockingErrors.length === 0 && sim.isBalanced,
+          });
+        } catch (err: any) {
+          errorCount++;
+          results.push({
+            document_id: cDoc.id,
+            errors: [err.message || String(err)],
+            is_valid: false,
+          });
+        }
+      }
+
+      return {
+        summary: {
+          total_documents: candidateDocs.length,
+          valid: validCount,
+          errors: errorCount,
+          total_debits: totalDebitos,
+          total_credits: totalCreditos,
+          is_balanced: Math.abs(totalDebitos - totalCreditos) < 0.1,
+        },
+        documents: results,
+      };
     },
   );
 
@@ -1714,7 +1557,7 @@ export async function buildServer(
       const { companyId, documentId } = parseBody(companyDocParams, req.params);
       const doc = await db
         .selectFrom('documents')
-        .select(['id', 'expense_account', 'payment_account', 'iva_account'])
+        .select(['id', 'expense_account', 'payable_account', 'payment_account', 'iva_account'])
         .where('company_id', '=', companyId)
         .where('id', '=', documentId)
         .executeTakeFirst();
@@ -1730,6 +1573,7 @@ export async function buildServer(
       return {
         document_id: documentId,
         expense_account: doc.expense_account ?? null,
+        payable_account: doc.payable_account ?? null,
         payment_account: doc.payment_account ?? null,
         iva_account: doc.iva_account ?? null,
         taxes: rows.map((r) => ({
@@ -1744,25 +1588,136 @@ export async function buildServer(
   );
 
   /* ---------------------------------------------------------------- */
-  /* Actualizar cuenta de IVA descontable (PUC) de un documento       */
+  /* Helper de validación para edición de cuentas contables de doc    */
+  /* ---------------------------------------------------------------- */
+  async function assertDocumentModifiable(companyId: string, documentId: string) {
+    const doc = await db
+      .selectFrom('documents')
+      .select(['id', 'company_id'])
+      .where('company_id', '=', companyId)
+      .where('id', '=', documentId)
+      .executeTakeFirst();
+    if (!doc) {
+      throw new HttpError(404, 'DOCUMENTO_NO_ENCONTRADO', 'Documento no encontrado.');
+    }
+
+    const matched = await db
+      .selectFrom('document_integration_matches')
+      .select(['id', 'match_status', 'external_number'])
+      .where('document_id', '=', documentId)
+      .where('match_status', '=', 'MATCHED')
+      .executeTakeFirst();
+
+    if (matched) {
+      throw new HttpError(
+        400,
+        'DOCUMENTO_YA_SINCRONIZADO',
+        `No se pueden modificar las cuentas contables de un documento ya sincronizado (Comprobante ${matched.external_number || matched.id}).`,
+      );
+    }
+    return doc;
+  }
+
+  async function validatePucAccount(companyId: string, accountCode: string | null | undefined) {
+    if (!accountCode || !accountCode.trim()) return null;
+    const clean = accountCode.trim();
+    const exists = await db
+      .selectFrom('accounting_accounts')
+      .select(['id'])
+      .where('company_id', '=', companyId)
+      .where('code', '=', clean)
+      .executeTakeFirst();
+    // Si la empresa tiene catálogo PUC cargado, validamos que la cuenta exista
+    const countTotal = await db
+      .selectFrom('accounting_accounts')
+      .select(db.fn.count('id').as('count'))
+      .where('company_id', '=', companyId)
+      .executeTakeFirst();
+    if (Number(countTotal?.count ?? 0) > 0 && !exists) {
+      throw new HttpError(
+        400,
+        'CUENTA_PUC_INVALIDA',
+        `La cuenta contable ${clean} no existe en el catálogo PUC de la empresa.`,
+      );
+    }
+    return clean;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Actualizar cuenta de gasto / contrapartida (PUC) de un documento */
   /* ---------------------------------------------------------------- */
   app.patch(
-    '/api/companies/:companyId/documents/:documentId/iva-account',
-    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    '/api/companies/:companyId/documents/:documentId/expense-account',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
     async (req) => {
       const { companyId, documentId } = req.params as { companyId: string; documentId: string };
-      const { iva_account } = req.body as { iva_account?: string | null };
+      const { expense_account } = req.body as { expense_account?: string | null };
+
+      await assertDocumentModifiable(companyId, documentId);
+      const cleanAccount = await validatePucAccount(companyId, expense_account);
 
       await db
         .updateTable('documents')
         .set({
-          iva_account: iva_account?.trim() || null,
+          expense_account: cleanAccount,
         })
         .where('company_id', '=', companyId)
         .where('id', '=', documentId)
         .execute();
 
-      return { success: true, iva_account: iva_account?.trim() || null };
+      return { success: true, expense_account: cleanAccount };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Actualizar cuenta por pagar a proveedor (PUC) de un documento    */
+  /* ---------------------------------------------------------------- */
+  app.patch(
+    '/api/companies/:companyId/documents/:documentId/payable-account',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+      const { payable_account } = req.body as { payable_account?: string | null };
+
+      await assertDocumentModifiable(companyId, documentId);
+      const cleanAccount = await validatePucAccount(companyId, payable_account);
+
+      await db
+        .updateTable('documents')
+        .set({
+          payable_account: cleanAccount,
+        })
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .execute();
+
+      return { success: true, payable_account: cleanAccount };
+    },
+  );
+
+  /* ---------------------------------------------------------------- */
+  /* Actualizar cuenta de IVA descontable (PUC) de un documento       */
+  /* ---------------------------------------------------------------- */
+  app.patch(
+    '/api/companies/:companyId/documents/:documentId/iva-account',
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
+    async (req) => {
+      const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+      const { iva_account } = req.body as { iva_account?: string | null };
+
+      await assertDocumentModifiable(companyId, documentId);
+      const cleanAccount = await validatePucAccount(companyId, iva_account);
+
+      await db
+        .updateTable('documents')
+        .set({
+          iva_account: cleanAccount,
+        })
+        .where('company_id', '=', companyId)
+        .where('id', '=', documentId)
+        .execute();
+
+      return { success: true, iva_account: cleanAccount };
     },
   );
 
@@ -1771,21 +1726,24 @@ export async function buildServer(
   /* ---------------------------------------------------------------- */
   app.patch(
     '/api/companies/:companyId/documents/:documentId/payment-account',
-    { preHandler: [guards.requireCompany, guards.requirePermission('documents.read')] },
+    { preHandler: [guards.requireCompany, guards.requirePermission('tax_rules.write')] },
     async (req) => {
       const { companyId, documentId } = req.params as { companyId: string; documentId: string };
       const { payment_account } = req.body as { payment_account?: string | null };
 
+      await assertDocumentModifiable(companyId, documentId);
+      const cleanAccount = await validatePucAccount(companyId, payment_account);
+
       await db
         .updateTable('documents')
         .set({
-          payment_account: payment_account?.trim() || null,
+          payment_account: cleanAccount,
         })
         .where('company_id', '=', companyId)
         .where('id', '=', documentId)
         .execute();
 
-      return { success: true, payment_account: payment_account?.trim() || null };
+      return { success: true, payment_account: cleanAccount };
     },
   );
 
