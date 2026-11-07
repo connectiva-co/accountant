@@ -9,7 +9,7 @@ import { formatCurrency, formatNumber } from '../utils/formatters';
 import { InvoiceViewerModal } from '../components/ui/InvoiceViewerModal';
 import { SimulationResultsModal } from '../components/ui/SimulationResultsModal';
 import { api } from '../api/client';
-import { CloudUpload, Play, Loader2, CheckCircle2 } from 'lucide-react';
+import { CloudUpload, Play, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import type { RadianRecord } from '../types/radian';
 import type { AccountingSimulationDocument } from '../utils/simulationExcel';
 
@@ -34,6 +34,9 @@ export const Compras: React.FC = () => {
     documents: AccountingSimulationDocument[];
   } | null>(null);
   const [showSimModal, setShowSimModal] = useState<boolean>(false);
+
+  const [syncErrorsList, setSyncErrorsList] = useState<Array<{ id: string; folio: string; thirdParty: string; error: string }>>([]);
+  const [showErrorModal, setShowErrorModal] = useState<boolean>(false);
 
   const rows = useMemo(() => filterRecords(periodRecords, 'compras'), [periodRecords]);
 
@@ -159,19 +162,41 @@ export const Compras: React.FC = () => {
       setSyncProgress({ current: 0, total: docsToSync.length });
       let success = 0;
       let errors = 0;
+      const failedList: Array<{ id: string; folio: string; thirdParty: string; error: string }> = [];
 
       for (let i = 0; i < docsToSync.length; i++) {
         const doc = docsToSync[i];
+        const record = rows.find((r) => r.id === doc.id) as any;
+        const folioStr = record ? `${record['Prefijo'] || ''}${record['Folio'] || ''}` : doc.id.substring(0, 8);
+        const partyStr = record ? String(record['Nombre / Razón Social Emisor'] || record['Emisor'] || record['Proveedor'] || '') : '';
+
         setSyncProgress({ current: i + 1, total: docsToSync.length });
         try {
           await api.syncDocumentToSiigo(selectedCompanyId, doc.id);
           success++;
-        } catch {
+        } catch (err: any) {
           errors++;
+          const errDetail = err?.response?.data?.message || err?.message || 'Error desconocido';
+          failedList.push({
+            id: doc.id,
+            folio: folioStr,
+            thirdParty: partyStr,
+            error: errDetail,
+          });
+        }
+
+        // Delay preventivo de 700ms entre llamadas para evitar Rate Limits de Siigo
+        if (i < docsToSync.length - 1) {
+          await new Promise((r) => setTimeout(r, 700));
         }
       }
 
-      setSyncMessage(`Sincronización completada: ${success} comprobantes creados en Siigo, ${errors} fallidos.`);
+      setSyncErrorsList(failedList);
+      if (failedList.length > 0) {
+        setShowErrorModal(true);
+      }
+
+      setSyncMessage(`Sincronización finalizada: ${success} comprobantes emitidos en Siigo, ${errors} fallidos.`);
       setSelectedDocIds(new Set());
       await reloadDataset();
       await checkEligible();
@@ -312,6 +337,54 @@ export const Compras: React.FC = () => {
         onClose={() => setShowSimModal(false)}
         onConfirmSync={(validDocs) => void handleBulkSync(validDocs)}
       />
+
+      {/* Modal de Resumen de Errores de Sincronización */}
+      {showErrorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-ink/40 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="bg-surface border border-line rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="p-4 border-b border-line flex items-center justify-between bg-amber-500/5">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-500" />
+                <h3 className="font-semibold text-ink text-sm">
+                  Resumen de Facturas con Fallo en Siigo ({syncErrorsList.length})
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowErrorModal(false)}
+                className="text-ink-muted hover:text-ink text-xs font-semibold px-2 py-1 rounded-md hover:bg-canvas"
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="p-4 overflow-y-auto space-y-2.5 text-xs">
+              <p className="text-ink-muted leading-relaxed">
+                Las siguientes facturas no se pudieron emitir a Siigo. Corrige el motivo indicado y vuelve a sincronizar:
+              </p>
+              {syncErrorsList.map((item, idx) => (
+                <div key={idx} className="p-3 rounded-lg border border-line bg-canvas space-y-1">
+                  <div className="flex items-center justify-between font-semibold">
+                    <span className="text-ink font-mono">{item.folio}</span>
+                    <span className="text-ink-muted truncate max-w-xs">{item.thirdParty}</span>
+                  </div>
+                  <div className="text-amber-700 bg-amber-500/10 p-2 rounded text-[11px] leading-tight font-mono">
+                    {item.error}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-3 border-t border-line bg-canvas flex justify-end">
+              <button
+                onClick={() => setShowErrorModal(false)}
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-brand text-white hover:bg-brand/90 transition shadow-sm"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };

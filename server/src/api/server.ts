@@ -1268,13 +1268,40 @@ export async function buildServer(
       // 4. Enviar a Siigo mediante Journals (Comprobante Contable) con auto-reintento inteligente
       try {
         let journal: any;
+
+        const executeCreateJournal = async (payloadItems: any[]): Promise<any> => {
+          let attempts = 0;
+          while (attempts < 4) {
+            attempts++;
+            try {
+              return await siigoClient.journals.create({
+                document: { id: documentTypeId },
+                date: docDate,
+                items: payloadItems,
+                observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
+              });
+            } catch (err: any) {
+              const isRateLimit =
+                err?.status === 429 ||
+                err?.statusCode === 429 ||
+                err?.name === 'SiigoRateLimitError' ||
+                err?.message?.includes('Rate limit');
+
+              if (isRateLimit && attempts < 4) {
+                // Si Siigo especifica segundos o por defecto 2, 4, 8 segundos
+                const matchSec = String(err?.message || '').match(/(\d+)\s+seconds/i);
+                const waitSec = matchSec ? parseInt(matchSec[1], 10) + 1 : attempts * 2.5;
+                req.log.warn(`Siigo 429 Rate Limit detectado. Pausando ${waitSec}s antes de reintentar... (intento ${attempts})`);
+                await new Promise((r) => setTimeout(r, waitSec * 1000));
+                continue;
+              }
+              throw err;
+            }
+          }
+        };
+
         try {
-          journal = await siigoClient.journals.create({
-            document: { id: documentTypeId },
-            date: docDate,
-            items,
-            observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
-          });
+          journal = await executeCreateJournal(items);
         } catch (firstErr: any) {
           // Si Siigo rechaza con account_settings o tax_settings en items[X],
           // significa que la cuenta no soporta el tax adjunto o el id de impuesto no corresponde a esa cuenta.
@@ -1303,12 +1330,7 @@ export async function buildServer(
                 delete items[idx].tax;
               }
             }
-            journal = await siigoClient.journals.create({
-              document: { id: documentTypeId },
-              date: docDate,
-              items,
-              observations: `Contabilizado desde Accountant · Factura DIAN ${folioStr}`,
-            });
+            journal = await executeCreateJournal(items);
           } else {
             throw firstErr;
           }
@@ -1356,11 +1378,17 @@ export async function buildServer(
         };
       } catch (err: any) {
         req.log.error({ err, items, docDate, documentTypeId }, 'Error emitiendo a Siigo');
-        const detail = err?.details ? JSON.stringify(err.details) : err?.message || String(err);
+        const rawErrors = err?.rawBody?.Errors || err?.errors || err?.aggregateErrors || [];
+        let detail = '';
+        if (rawErrors.length > 0) {
+          detail = rawErrors.map((e: any) => e.Message || e.message || e.Code || JSON.stringify(e)).join('; ');
+        } else {
+          detail = err?.details ? JSON.stringify(err.details) : err?.message || String(err);
+        }
         throw new HttpError(
           502,
           'ERROR_EMISION_SIIGO',
-          `Error emitiendo a Siigo: ${detail}`,
+          detail,
         );
       }
     },
