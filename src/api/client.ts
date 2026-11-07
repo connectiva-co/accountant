@@ -351,9 +351,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = (body as { error?: { message?: string; code?: string } } | null)?.error;
+    const errorBody = body as { error?: { message?: string; code?: string } } | null;
+    const error = errorBody?.error;
+    const msg = error?.message || (typeof body === 'object' && body !== null && 'message' in body ? String((body as any).message) : null);
     throw new ApiError(
-      error?.message ?? `Error ${response.status} en ${path}`,
+      msg ?? `Error ${response.status} en ${path}`,
       response.status,
       error?.code,
     );

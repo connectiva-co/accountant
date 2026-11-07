@@ -1211,7 +1211,7 @@ export async function buildServer(
     {
       preHandler: [guards.requireCompany, guards.requirePermission('sync.execute')],
     },
-    async (req) => {
+    async (req, reply) => {
       const { companyId, documentId } = req.params as { companyId: string; documentId: string };
 
       // 1. Obtener documento y terceros
@@ -1381,15 +1381,18 @@ export async function buildServer(
         const rawErrors = err?.rawBody?.Errors || err?.errors || err?.aggregateErrors || [];
         let detail = '';
         if (rawErrors.length > 0) {
-          detail = rawErrors.map((e: any) => e.Message || e.message || e.Code || JSON.stringify(e)).join('; ');
+          detail = rawErrors
+            .map((e: any) => e.Message || e.message || e.Detail || e.detail || e.Code || JSON.stringify(e))
+            .join(' | ');
         } else {
           detail = err?.details ? JSON.stringify(err.details) : err?.message || String(err);
         }
-        throw new HttpError(
-          502,
-          'ERROR_EMISION_SIIGO',
-          detail,
-        );
+        return reply.status(502).send({
+          error: {
+            code: 'ERROR_EMISION_SIIGO',
+            message: detail,
+          },
+        });
       }
     },
   );
